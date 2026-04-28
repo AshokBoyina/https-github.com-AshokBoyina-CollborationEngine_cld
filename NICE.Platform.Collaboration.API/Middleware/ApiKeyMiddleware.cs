@@ -7,8 +7,9 @@ public class ApiKeyMiddleware(RequestDelegate next)
 
     public async Task InvokeAsync(HttpContext context, IApplicationRepository appRepo)
     {
-        // Skip for: auth pre-flight, SignalR hubs, health checks
-        if (context.Request.Path.StartsWithSegments("/api/auth") ||
+        // Skip for: Swagger UI/spec, auth pre-flight, SignalR hubs, health checks
+        if (context.Request.Path.StartsWithSegments("/swagger") ||
+            context.Request.Path.StartsWithSegments("/api/auth") ||
             context.Request.Path.StartsWithSegments("/hubs") ||
             context.Request.Path.StartsWithSegments("/health"))
         {
