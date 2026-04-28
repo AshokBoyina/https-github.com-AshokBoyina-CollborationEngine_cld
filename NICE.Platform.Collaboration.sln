@@ -1,0 +1,52 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.8.34322.80
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NICE.Platform.Collaboration.Core", "NICE.Platform.Collaboration.Core\NICE.Platform.Collaboration.Core.csproj", "{4BF533D9-B842-4974-BC12-BA37D71D92D9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NICE.Platform.Collaboration.Contracts", "NICE.Platform.Collaboration.Contracts\NICE.Platform.Collaboration.Contracts.csproj", "{C25A9B3B-BD58-4CB1-89AB-2337782853E9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NICE.Platform.Collaboration.Application", "NICE.Platform.Collaboration.Application\NICE.Platform.Collaboration.Application.csproj", "{64FD5F34-2520-41FC-8680-F1DB2723D0F2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NICE.Platform.Collaboration.Infrastructure", "NICE.Platform.Collaboration.Infrastructure\NICE.Platform.Collaboration.Infrastructure.csproj", "{5E5D7A59-DB91-417B-B950-113281B30E5F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NICE.Platform.Collaboration.API", "NICE.Platform.Collaboration.API\NICE.Platform.Collaboration.API.csproj", "{9ECCFBB4-F047-43C8-A2BC-E4E0FAF3E506}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NICE.Platform.Collaboration.Tests", "NICE.Platform.Collaboration.Tests\NICE.Platform.Collaboration.Tests.csproj", "{A4283B21-8C00-4859-BC70-B9F6FA5D4042}"
+EndProject
+
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4BF533D9-B842-4974-BC12-BA37D71D92D9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4BF533D9-B842-4974-BC12-BA37D71D92D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4BF533D9-B842-4974-BC12-BA37D71D92D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4BF533D9-B842-4974-BC12-BA37D71D92D9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C25A9B3B-BD58-4CB1-89AB-2337782853E9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C25A9B3B-BD58-4CB1-89AB-2337782853E9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C25A9B3B-BD58-4CB1-89AB-2337782853E9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C25A9B3B-BD58-4CB1-89AB-2337782853E9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{64FD5F34-2520-41FC-8680-F1DB2723D0F2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{64FD5F34-2520-41FC-8680-F1DB2723D0F2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{64FD5F34-2520-41FC-8680-F1DB2723D0F2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{64FD5F34-2520-41FC-8680-F1DB2723D0F2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5E5D7A59-DB91-417B-B950-113281B30E5F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5E5D7A59-DB91-417B-B950-113281B30E5F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5E5D7A59-DB91-417B-B950-113281B30E5F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5E5D7A59-DB91-417B-B950-113281B30E5F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9ECCFBB4-F047-43C8-A2BC-E4E0FAF3E506}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9ECCFBB4-F047-43C8-A2BC-E4E0FAF3E506}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9ECCFBB4-F047-43C8-A2BC-E4E0FAF3E506}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9ECCFBB4-F047-43C8-A2BC-E4E0FAF3E506}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A4283B21-8C00-4859-BC70-B9F6FA5D4042}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A4283B21-8C00-4859-BC70-B9F6FA5D4042}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A4283B21-8C00-4859-BC70-B9F6FA5D4042}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A4283B21-8C00-4859-BC70-B9F6FA5D4042}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
