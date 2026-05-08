@@ -1,29 +1,34 @@
 namespace NICE.Platform.Collaboration.Contracts.Requests;
 
-using System.ComponentModel.DataAnnotations;
-
 /// <summary>
-/// Request body for POST /api/auth/validate.
-/// The JWT token itself is supplied in the "X-Api-Key" request header.
-/// User identity and the target application are provided here because
-/// the external JWT does not embed those claims.
+/// All authentication parameters arrive as HTTP request headers — there is no body.
+///
+/// Required headers:
+///
+///   X-Api-Key    — the registered application's secret API key.
+///                  Validated (hashed) against the application store.
+///
+///   X-Access-Key — the Application Name (e.g. "SurveyPortal", "CustomerSupport").
+///                  The engine looks up the application by this name and derives
+///                  the AuthProvider (READI | NICE | ANON) from its stored configuration.
+///                  The calling client never selects the auth provider directly.
+///
+///   AuthToken    — the token to be validated by the provider configured for the application.
+///
+///   UserType     — role of the connecting user:
+///                  External | Internal | Agent | Supervisor | StandAlone
 /// </summary>
-public class AuthValidateRequest
+public static class AuthHeaders
 {
-    [Required]
-    public string FirstName { get; set; } = default!;
+    /// <summary>The application's secret API key.</summary>
+    public const string ApiKey    = "X-Api-Key";
 
-    [Required]
-    public string LastName { get; set; } = default!;
+    /// <summary>The Application Name — used to look up the application and its AuthProvider.</summary>
+    public const string AccessKey = "X-Access-Key";
 
-    [Required]
-    [EmailAddress]
-    public string Email { get; set; } = default!;
+    /// <summary>The raw token forwarded to the configured auth provider for validation.</summary>
+    public const string AuthToken = "AuthToken";
 
-    /// <summary>
-    /// Must match a key in the "AuthProviders" appsettings section — e.g. "Readi" or "Nice".
-    /// Used to select the correct OIDC provider for token validation.
-    /// </summary>
-    [Required]
-    public string ApplicationName { get; set; } = default!;
+    /// <summary>The connecting user's role: External | Internal | Agent | Supervisor | StandAlone.</summary>
+    public const string UserType  = "UserType";
 }
