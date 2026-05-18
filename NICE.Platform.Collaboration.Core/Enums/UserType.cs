@@ -6,5 +6,9 @@ public enum UserType
     Internal,
     Agent,
     Supervisor,
-    StandAlone
+    StandAlone,
+    /// <summary>Screen recorder — captures their own screen, shares live + saves to disk/blob.</summary>
+    Standalone,
+    /// <summary>Watches all active Standalone sessions live via WebRTC.</summary>
+    StandaloneMonitor
 }

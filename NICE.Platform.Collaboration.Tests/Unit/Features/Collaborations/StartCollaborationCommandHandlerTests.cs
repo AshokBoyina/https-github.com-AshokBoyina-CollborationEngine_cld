@@ -27,7 +27,7 @@ public class StartCollaborationCommandHandlerTests
         // Arrange
         var command = new StartCollaborationCommand(
             UserId: Guid.NewGuid(),
-            AgentId: Guid.NewGuid(),
+            PreferredAgentId: null,   // null = any available agent can accept
             ApplicationId: Guid.NewGuid());
 
         // TODO: setup mocks and instantiate handler

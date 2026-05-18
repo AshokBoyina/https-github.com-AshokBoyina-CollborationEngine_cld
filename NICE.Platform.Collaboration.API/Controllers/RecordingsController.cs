@@ -1,40 +1,175 @@
 namespace NICE.Platform.Collaboration.API.Controllers;
-using MediatR;
-using Microsoft.AspNetCore.Mvc;
-using NICE.Platform.Collaboration.Contracts.Requests;
 
+using System.Security.Claims;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StartRecording;
+using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StopRecording;
+using NICE.Platform.Collaboration.Application.Features.Recordings.Queries.GetRecordingsByCollaboration;
+using NICE.Platform.Collaboration.Application.Features.Recordings.Queries.GetRecordingSasUrl;
+using NICE.Platform.Collaboration.Application.Interfaces.Services;
+using NICE.Platform.Collaboration.Contracts.Requests;
+using NICE.Platform.Collaboration.Infrastructure.Persistence;
+using NICE.Platform.Collaboration.API.Hubs;
+
+[Authorize]
 [ApiController]
-[Route("api/recordings")]
-public class RecordingsController(ISender sender) : ControllerBase
+[Route("api/v1/collaboration/recordings")]
+public class RecordingsController(
+    ISender                   sender,
+    IRecordingStreamStore      store,
+    IRecordingSessionTracker   tracker,
+    IHubContext<RecordingHub>  hubContext,
+    CollaborationDbContext      db) : ControllerBase
 {
-    private readonly ISender _sender = sender;
-    
+    private Guid CallerId =>
+        Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier)
+                   ?? User.FindFirstValue("sub"), out var id)
+            ? id : Guid.Empty;
+
+    // ── Standard recording lifecycle ─────────────────────────────────────────
+
+    /// <summary>Start a new recording for a collaboration.</summary>
     [HttpPost("start")]
     public async Task<IActionResult> Start(
         [FromBody] StartRecordingRequest request, CancellationToken ct)
     {
-        // TODO: dispatch StartRecordingCommand
-        throw new NotImplementedException();
+        var result = await sender.Send(
+            new StartRecordingCommand(request.CollaborationId, CallerId, request.Type), ct);
+        return Ok(result);
     }
 
+    /// <summary>Stop an active recording and store blob path.</summary>
     [HttpPost("{id:guid}/stop")]
-    public async Task<IActionResult> Stop(Guid id, [FromQuery] string blobPath, CancellationToken ct)
+    public async Task<IActionResult> Stop(
+        Guid id, [FromQuery] string blobPath, CancellationToken ct)
     {
-        // TODO: dispatch StopRecordingCommand
-        throw new NotImplementedException();
+        var result = await sender.Send(
+            new StopRecordingCommand(id, CallerId, blobPath), ct);
+        return Ok(result);
     }
 
+    /// <summary>Get all recordings for a collaboration.</summary>
     [HttpGet("{collaborationId:guid}")]
     public async Task<IActionResult> GetByCollaboration(Guid collaborationId, CancellationToken ct)
     {
-        // TODO: dispatch GetRecordingsByCollaborationQuery
-        throw new NotImplementedException();
+        var result = await sender.Send(
+            new GetRecordingsByCollaborationQuery(collaborationId), ct);
+        return Ok(result);
     }
 
+    /// <summary>Get a time-limited SAS URL (or local proxy URL) for streaming a recording.</summary>
     [HttpGet("{id:guid}/sas-url")]
     public async Task<IActionResult> GetSasUrl(Guid id, CancellationToken ct)
     {
-        // TODO: dispatch GetRecordingSasUrlQuery
-        throw new NotImplementedException();
+        var url = await sender.Send(new GetRecordingSasUrlQuery(id), ct);
+        return Ok(new { Url = url });
+    }
+
+    // ── StandAlone live recording chunk upload ──────────────────────────────
+
+    /// <summary>
+    /// Agent JS posts binary recording chunks here (raw body, not multipart).
+    /// The server appends each chunk to local disk + Azure Blob in real-time
+    /// and broadcasts a RecordingChunk notification to supervisors watching.
+    ///
+    /// Body: raw binary WebM chunk
+    /// Header: Content-Type: application/octet-stream
+    /// Header: X-Chunk-Sequence: {int}   (0-based chunk number from JS)
+    /// </summary>
+    [HttpPost("{id:guid}/chunks")]
+    [Consumes("application/octet-stream")]
+    [RequestSizeLimit(2 * 1024 * 1024)]   // 2 MB max per chunk
+    public async Task<IActionResult> UploadChunk(Guid id, CancellationToken ct)
+    {
+        // Read raw binary body
+        using var ms = new MemoryStream();
+        await Request.Body.CopyToAsync(ms, ct);
+        var chunk = ms.ToArray();
+
+        if (chunk.Length == 0)
+            return BadRequest(new { error = "Empty chunk." });
+
+        // Append to storage (local disk + optional Azure blob)
+        await store.AppendChunkAsync(id, chunk, ct);
+
+        // Update in-memory byte counter
+        tracker.AddBytes(id, chunk.Length);
+
+        // Parse optional sequence number from header
+        _ = int.TryParse(Request.Headers["X-Chunk-Sequence"].ToString(), out var seq);
+
+        // Broadcast chunk-available event to supervisors watching this recording
+        await hubContext.Clients
+            .Group($"recording-{id}")
+            .SendAsync("RecordingChunk", new
+            {
+                RecordingId = id.ToString(),
+                Sequence    = seq,
+                SizeBytes   = chunk.Length
+            });
+
+        return Ok(new { RecordingId = id, Sequence = seq, SizeBytes = chunk.Length });
+    }
+
+    // ── HTTP range-streaming for supervisor live / completed playback ─────────
+
+    /// <summary>
+    /// Streams the recording file with HTTP range-request support.
+    /// The supervisor's video element sources this URL.
+    /// Works for both live recordings (file grows) and completed ones.
+    /// </summary>
+    [HttpGet("{id:guid}/stream")]
+    public async Task<IActionResult> Stream(Guid id, CancellationToken ct)
+    {
+        var localPath = store.GetLocalPath(id);
+
+        // If not in local store (e.g. Azure-only), fall back to SAS URL
+        if (localPath == null || !System.IO.File.Exists(localPath))
+        {
+            // Try to serve from DB BlobUri via a redirect
+            var rec = await db.Recordings.AsNoTracking()
+                               .FirstOrDefaultAsync(r => r.Id == id, ct);
+            if (rec?.BlobUri == null) return NotFound();
+            var fallbackPath = System.IO.Path.Combine(
+                AppContext.BaseDirectory, "LocalStorage", "Recordings", $"{id}.webm");
+            if (!System.IO.File.Exists(fallbackPath)) return NotFound();
+            localPath = fallbackPath;
+        }
+
+        // Serve with range support so the browser can seek / buffer incrementally
+        var fileStream = new FileStream(localPath, FileMode.Open, FileAccess.Read,
+                                        FileShare.ReadWrite, 65536, true);
+        Response.Headers.Append("Accept-Ranges", "bytes");
+        return File(fileStream, "video/webm", enableRangeProcessing: true);
+    }
+
+    // ── List live recordings by application (for supervisor initial load) ────
+
+    /// <summary>
+    /// Returns all currently live recording sessions for the calling user's application.
+    /// Supervisor uses this on page load to populate the session list without waiting
+    /// for real-time events.
+    /// </summary>
+    [HttpGet("live")]
+    public IActionResult GetLive()
+    {
+        var appIdClaim = User.FindFirstValue("app");
+        if (!Guid.TryParse(appIdClaim, out var appId))
+            return BadRequest(new { error = "app claim missing from token" });
+
+        var live = tracker.GetByApplication(appId);
+        return Ok(live.Select(r => new
+        {
+            r.RecordingId,
+            r.CollaborationId,
+            r.AgentUserId,
+            r.AgentDisplayName,
+            r.StartedAt,
+            r.BytesWritten
+        }));
     }
 }

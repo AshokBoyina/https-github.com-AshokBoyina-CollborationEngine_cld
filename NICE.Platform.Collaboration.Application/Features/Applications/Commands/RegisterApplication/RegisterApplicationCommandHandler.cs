@@ -1,11 +1,3 @@
-namespace NICE.Platform.Collaboration.Application.Features.Applications.Commands.RegisterApplication;
-using MediatR;
-public class RegisterApplicationCommandHandler : IRequestHandler<RegisterApplicationCommand, Guid>
-{
-    // TODO: inject ICollaborationRepository, ISignalRNotifier, etc. via constructor
-    public Task<Guid> Handle(RegisterApplicationCommand request, CancellationToken cancellationToken)
-    {
-        // TODO: hash API key, create ApplicationRegistration entity, persist
-        throw new NotImplementedException();
-    }
-}
+// Handler moved to NICE.Platform.Collaboration.Infrastructure (same relative path).
+// Application layer cannot reference Infrastructure — handlers that use CollaborationDbContext
+// live in Infrastructure. MediatR scans both assemblies via AddInfrastructureServices().

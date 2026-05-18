@@ -47,17 +47,17 @@ public sealed class AnonymousAuthValidator : IAuthValidator
         // ── MOCK MODE ─────────────────────────────────────────────────────────
         if (_settings.UseMock)
         {
-            _logger.LogWarning("[MOCK] ANON validation bypassed — returning mock response.");
+            _logger.LogWarning("[MOCK] ANON validation bypassed — token-aware mock.");
             var mock = _settings.Mock.Anon;
-            var result = mock.IsValid
-                ? AuthValidatorResult.Ok(
-                    mock.UserId,
-                    mock.Email,
-                    mock.FirstName,
-                    mock.LastName,
-                    surveyId: mock.SurveyId ?? "mock-survey-id")
-                : AuthValidatorResult.Fail(mock.Error ?? "Mock ANON validation failed.");
-            return Task.FromResult(result);
+            if (!mock.IsValid)
+                return Task.FromResult(AuthValidatorResult.Fail(mock.Error ?? "Mock ANON validation failed."));
+
+            // Use the token itself as the ExternalUserId so demo users are distinguishable.
+            // Parse "alice-smith" → firstName=Alice, lastName=Smith.
+            var mockUserId   = string.IsNullOrWhiteSpace(authToken) ? mock.UserId : authToken;
+            var (first, last) = ParseDemoName(authToken, mock.FirstName, mock.LastName);
+            var mockSurveyId = mock.SurveyId ?? mockUserId;
+            return Task.FromResult(AuthValidatorResult.Ok(mockUserId, mock.Email, first, last, mockSurveyId));
         }
 
         // ── REAL ANON VALIDATION — decode JWT claims internally ───────────────
@@ -97,10 +97,35 @@ public sealed class AnonymousAuthValidator : IAuthValidator
             "ANON validation succeeded for SurveyId={SurveyId}, Name={FirstName} {LastName}.",
             surveyId, firstName, lastName);
 
-        return Task.FromResult(
-            AuthValidatorResult.Ok(userId, email, firstName, lastName, surveyId));
+        return Task.FromResult(AuthValidatorResult.Ok(
+            userId:    userId,
+            firstName: firstName,
+            lastName:  lastName,
+            email:     email,
+            surveyId:  surveyId));
     }
 
-    private static string? GetClaim(JwtSecurityToken jwt, string claimType) =>
-        jwt.Claims.FirstOrDefault(c => c.Type == claimType)?.Value;
+    private static string? GetClaim(System.IdentityModel.Tokens.Jwt.JwtSecurityToken jwt, string claimType)
+        => jwt.Claims.FirstOrDefault(c => c.Type == claimType)?.Value;
+
+    /// <summary>
+    /// Converts a demo token slug to a (First, Last) name pair.
+    /// "alice-smith" → ("Alice", "Smith"). Falls back to provided defaults.
+    /// Called by all three validators in mock mode.
+    /// </summary>
+    public static (string First, string Last) ParseDemoName(
+        string? token, string defaultFirst, string defaultLast)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return (defaultFirst, defaultLast);
+
+        var parts = token.Trim().Split('-', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        static string Cap(string s) =>
+            s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
+
+        return parts.Length >= 2
+            ? (Cap(parts[0]), Cap(parts[1]))
+            : (Cap(parts[0]), defaultLast);
+    }
 }

@@ -1,29 +1,33 @@
 namespace NICE.Platform.Collaboration.Infrastructure.Persistence.Repositories;
+
 using Microsoft.EntityFrameworkCore;
 using NICE.Platform.Collaboration.Application.Interfaces.Repositories;
 using NICE.Platform.Collaboration.Core.Entities;
-using NICE.Platform.Collaboration.Core.Enums;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
-public class TransferRepository(CollaborationDbContext context) : ITransferRepository
+public class TransferRepository(CollaborationDbContext db) : ITransferRepository
 {
-    private readonly CollaborationDbContext _context = context;
+    public Task<CollaborationTransferRequest?> GetPendingAsync(Guid collaborationId, CancellationToken ct)
+        => db.TransferRequests
+            .FirstOrDefaultAsync(t => t.CollaborationId == collaborationId
+                                   && t.Status == "Pending", ct);
 
-    public async Task AddAsync(TransferRequest transfer, CancellationToken ct)
+    public async Task<IEnumerable<CollaborationTransferRequest>> GetByCollaborationAsync(
+        Guid collaborationId, CancellationToken ct)
+        => await db.TransferRequests
+            .Where(t => t.CollaborationId == collaborationId)
+            .OrderByDescending(t => t.RequestedAt)
+            .ToListAsync(ct);
+
+    public async Task AddAsync(CollaborationTransferRequest transfer, CancellationToken ct)
     {
-        await _context.TransferRequests.AddAsync(transfer, ct);
-        await _context.SaveChangesAsync(ct);
+        await db.TransferRequests.AddAsync(transfer, ct);
+        await db.SaveChangesAsync(ct);
     }
 
-    public async Task UpdateAsync(TransferRequest transfer, CancellationToken ct)
+    public async Task UpdateAsync(CollaborationTransferRequest transfer, CancellationToken ct)
     {
-        _context.TransferRequests.Update(transfer);
-        await _context.SaveChangesAsync(ct);
+        db.TransferRequests.Update(transfer);
+        await db.SaveChangesAsync(ct);
     }
-
-    public async Task<TransferRequest?> GetPendingAsync(Guid collaborationId, CancellationToken ct)
-        => await _context.TransferRequests
-            .FirstOrDefaultAsync(
-                t => t.CollaborationId == collaborationId && t.Status == TransferStatus.Pending,
-                ct);
 }

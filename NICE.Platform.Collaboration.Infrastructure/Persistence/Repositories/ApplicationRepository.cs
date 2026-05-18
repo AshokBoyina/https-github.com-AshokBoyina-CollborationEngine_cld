@@ -1,29 +1,30 @@
 namespace NICE.Platform.Collaboration.Infrastructure.Persistence.Repositories;
+
 using Microsoft.EntityFrameworkCore;
 using NICE.Platform.Collaboration.Application.Interfaces.Repositories;
 using NICE.Platform.Collaboration.Core.Entities;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
-public class ApplicationRepository(CollaborationDbContext context) : IApplicationRepository
+public class ApplicationRepository(CollaborationDbContext db) : IApplicationRepository
 {
-    private readonly CollaborationDbContext _context = context;
+    public Task<CollaborationApplication?> GetByIdAsync(Guid id, CancellationToken ct)
+        => db.Applications.FindAsync([id], ct).AsTask();
 
-    public async Task<ApplicationRegistration?> GetByIdAsync(Guid id, CancellationToken ct)
-        => await _context.Applications.FindAsync([id], ct);
+    public Task<CollaborationApplication?> GetByApiKeyHashAsync(string hash, CancellationToken ct)
+        => db.Applications.FirstOrDefaultAsync(a => a.HashedApiKey == hash, ct);
 
-    public async Task<ApplicationRegistration?> GetByApiKeyHashAsync(string hash, CancellationToken ct)
-        => await _context.Applications
-            .FirstOrDefaultAsync(a => a.HashedApiKey == hash, ct);
+    public Task<CollaborationApplication?> GetByNameAsync(string name, CancellationToken ct)
+        => db.Applications.FirstOrDefaultAsync(a => a.Name == name, ct);
 
-    public async Task AddAsync(ApplicationRegistration app, CancellationToken ct)
+    public async Task AddAsync(CollaborationApplication app, CancellationToken ct)
     {
-        await _context.Applications.AddAsync(app, ct);
-        await _context.SaveChangesAsync(ct);
+        await db.Applications.AddAsync(app, ct);
+        await db.SaveChangesAsync(ct);
     }
 
-    public async Task UpdateAsync(ApplicationRegistration app, CancellationToken ct)
+    public async Task UpdateAsync(CollaborationApplication app, CancellationToken ct)
     {
-        _context.Applications.Update(app);
-        await _context.SaveChangesAsync(ct);
+        db.Applications.Update(app);
+        await db.SaveChangesAsync(ct);
     }
 }

@@ -6,7 +6,12 @@ namespace NICE.Platform.Collaboration.Application.Auth;
 /// and later from the SQL ApplicationConfiguration table.
 ///
 /// X-Access-Key header carries the ApplicationName.
-/// AuthProvider is stored here — the calling client never selects the validator directly.
+/// Auth provider routing is enforced here — the calling client never selects the
+/// validator directly.
+///
+/// Auth provider routing rules:
+///   • UserType = External  → Always ANON (hardcoded; StaffAuthProvider is ignored).
+///   • All other UserTypes  → StaffAuthProvider value (READI | NICE | ANON).
 /// </summary>
 public class ApplicationConfig
 {
@@ -14,10 +19,12 @@ public class ApplicationConfig
     public string Name { get; set; } = default!;
 
     /// <summary>
-    /// Which external validator to invoke: READI | NICE | ANON.
-    /// Configured per-application — the client does not choose this.
+    /// Auth provider used for Agent, Supervisor, Internal, and StandAlone users.
+    /// Accepted values: READI | NICE | ANON.
+    /// Configured per-application via X-Api-Key — the client never chooses this.
+    /// External users always use ANON regardless of this setting.
     /// </summary>
-    public string AuthProvider { get; set; } = default!;
+    public string StaffAuthProvider { get; set; } = default!;
 
     /// <summary>Config returned to External users.</summary>
     public ExternalUserConfig? External { get; set; }

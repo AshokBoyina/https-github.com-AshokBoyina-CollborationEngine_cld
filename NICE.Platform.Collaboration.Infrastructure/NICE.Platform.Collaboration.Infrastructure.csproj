@@ -8,8 +8,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.*" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.*" />
-    <PackageReference Include="StackExchange.Redis" Version="2.*" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.*" />
+    <!-- Explicit: handlers that live here use MediatR + logging directly -->
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -17,5 +19,4 @@
   <ItemGroup>
     <ProjectReference Include="..\NICE.Platform.Collaboration.Application\NICE.Platform.Collaboration.Application.csproj" />
   </ItemGroup>
-
 </Project>

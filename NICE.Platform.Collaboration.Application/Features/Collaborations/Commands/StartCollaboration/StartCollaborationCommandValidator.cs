@@ -5,7 +5,8 @@ public class StartCollaborationCommandValidator : AbstractValidator<StartCollabo
     public StartCollaborationCommandValidator()
     {
         RuleFor(x => x.UserId).NotEmpty();
-        RuleFor(x => x.AgentId).NotEmpty();
+        // PreferredAgentId is intentionally optional — null means the collaboration
+        // goes to any available agent.
         RuleFor(x => x.ApplicationId).NotEmpty();
     }
 }

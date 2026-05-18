@@ -1,0 +1,623 @@
+@page "/supervisor/recording"
+@page "/recordings"
+@layout BlankLayout
+@inject IAuthService            Auth
+@inject IRecordingHubService    RecHub
+@inject NavigationManager       Nav
+@inject IJSRuntime              JS
+@inject HttpClient              Http
+@implements IAsyncDisposable
+
+<div class="nc-page">
+
+    <!-- ── Top bar ──────────────────────────────────────────────────────── -->
+    <div class="nc-topbar">
+        <div class="nc-topbar-brand">NICE · StandAlone Recording</div>
+        <div class="nc-topbar-meta">
+            <span style="color:#fca5a5">Live <b>@_live.Count</b></span>
+            &nbsp;·&nbsp;
+            Hub <b style="color:@HubColor">@HubLabel</b>
+            @if (!string.IsNullOrEmpty(_hubError))
+            {
+                <span style="color:#fca5a5;margin-left:8px;font-size:.75rem">⚠ @_hubError</span>
+            }
+        </div>
+        <div class="nc-topbar-right">
+            <div class="nc-avatar-btn" style="background:@AvatarColor(Auth.Current.DisplayName)">@_initials</div>
+        </div>
+    </div>
+
+    <div class="nc-body">
+
+        <!-- ── Left sidebar — live session list ─────────────────────────── -->
+        <div class="nc-sidebar">
+            <div class="nc-sidebar-scroll">
+                @if (_live.Count == 0)
+                {
+                    <div style="padding:20px 12px;text-align:center;color:var(--nice-text-muted);font-size:.78rem">
+                        No live recordings.<br/>Waiting for sessions…
+                    </div>
+                }
+                @foreach (var s in _live.Values)
+                {
+                    var isMe = s.RecordingId == _myRecordingId;
+                    <div class="nc-rec-row @(s.RecordingId == _selectedId ? "nc-rec-row--active" : "")"
+                         @onclick="() => SelectSession(s)">
+                        <div class="nc-rec-row-hd">
+                            <div class="nc-item-av" style="background:@AvatarColor(s.AgentDisplayName);width:24px;height:24px;font-size:.62rem;flex-shrink:0">
+                                @Initials(s.AgentDisplayName)
+                            </div>
+                            <span class="nc-rec-row-name">@s.AgentDisplayName @(isMe ? "(me)" : "")</span>
+                            <span class="tag tag--red" style="margin-left:auto">REC</span>
+                        </div>
+                        <div style="font-size:.7rem;color:var(--nice-text-muted);margin:3px 0 5px 28px">
+                            @s.DurationLabel · @s.FileSizeFmt
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ── Centre panel — selected recording ────────────────────────── -->
+        <div class="nc-center">
+            @if (_selected != null)
+            {
+                <!-- Recording header -->
+                <div class="nc-session-hd">
+                    <div class="nc-session-title">
+                        <div class="nc-item-av" style="background:@AvatarColor(_selected.AgentDisplayName)">
+                            @Initials(_selected.AgentDisplayName)
+                        </div>
+                        <span>@_selected.AgentDisplayName</span>
+                        <span class="tag tag--red">LIVE · REC</span>
+                        <span class="tag tag--muted" style="font-size:.65rem">@_selected.DurationLabel</span>
+                    </div>
+                    <div class="nc-session-actions">
+                        <button class="btn" @onclick="CopyStreamUrl" title="Copy stream URL">⎘ URL</button>
+                    </div>
+                </div>
+
+                <!-- Video player — HTTP range stream from server -->
+                <div style="padding:12px 16px 0;flex-shrink:0">
+                    <div class="nc-video" style="position:relative;height:240px;background:#000;border-radius:var(--radius-md);overflow:hidden">
+                        <video id="rec-video-@_selected.RecordingId"
+                               style="width:100%;height:100%;object-fit:contain"
+                               autoplay muted playsinline>
+                        </video>
+                        <div class="nc-video__live">
+                            <span class="pulse"></span>
+                            LIVE · @_selected.AgentDisplayName
+                        </div>
+                        <div class="nc-video__rec">REC</div>
+                        <div style="position:absolute;bottom:8px;left:10px;font-size:.65rem;color:rgba(255,255,255,.6)">
+                            @_selected.FileSizeFmt · @_selected.DurationLabel
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics row -->
+                <div style="padding:10px 16px;display:flex;gap:8px;flex-shrink:0">
+                    <div class="stat-card" style="flex:1">
+                        <div class="n n--red" style="font-size:1rem">@_selected.DurationLabel</div>
+                        <div class="lbl">Duration</div>
+                    </div>
+                    <div class="stat-card" style="flex:1">
+                        <div class="n" style="font-size:1rem">@_selected.FileSizeFmt</div>
+                        <div class="lbl">Saved</div>
+                    </div>
+                    <div class="stat-card" style="flex:1">
+                        <div class="n n--primary" style="font-size:.9rem">@_chunkCount</div>
+                        <div class="lbl">Chunks</div>
+                    </div>
+                    <div class="stat-card" style="flex:1">
+                        <div class="n" style="font-size:.9rem">@_selected.StartedAt.ToLocalTime().ToString("HH:mm:ss")</div>
+                        <div class="lbl">Started</div>
+                    </div>
+                </div>
+
+                <!-- Whisper to agent (only if not watching own session) -->
+                @if (_selected.RecordingId != _myRecordingId)
+                {
+                    <div style="padding:0 16px;flex-shrink:0">
+                        <div class="nc-rp-title" style="margin-bottom:6px">Whisper to agent (private)</div>
+                        <div style="display:flex;gap:6px">
+                            <input class="nc-input" style="flex:1"
+                                   placeholder="Only the agent sees this…"
+                                   @bind="_whisperText"
+                                   @onkeydown="OnWhisperKey" />
+                            <button class="btn btn--primary"
+                                    @onclick="SendWhisper"
+                                    disabled="@(string.IsNullOrWhiteSpace(_whisperText))">
+                                Whisper
+                            </button>
+                        </div>
+                    </div>
+                }
+
+                <!-- Whisper history (supervisor sent) -->
+                @if (_whispers.Count > 0)
+                {
+                    <div style="padding:8px 16px;flex-shrink:0;max-height:120px;overflow-y:auto">
+                        @foreach (var w in _whispers)
+                        {
+                            <div style="font-size:.72rem;color:var(--nice-text-muted);margin-bottom:4px">
+                                <span style="color:var(--nice-primary);font-weight:600">Whispered</span>
+                                · @w.SentAt.ToLocalTime().ToString("HH:mm:ss") · @w.Message
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Whispers received (if watching own recording) -->
+                @if (_selected.RecordingId == _myRecordingId && _recWhispers.Count > 0)
+                {
+                    <div style="padding:8px 16px;flex-shrink:0;max-height:160px;overflow-y:auto">
+                        <div class="nc-rp-title" style="margin-bottom:6px">Supervisor messages</div>
+                        @foreach (var w in _recWhispers)
+                        {
+                            <div style="font-size:.72rem;color:var(--nice-text-muted);margin-bottom:4px">
+                                <span style="color:#fca5a5;font-weight:600">@w.FromName</span>
+                                · @w.SentAt.ToLocalTime().ToString("HH:mm:ss") · @w.Message
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--nice-text-muted);flex-direction:column;gap:8px">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" opacity=".3">
+                        <circle cx="12" cy="12" r="9" stroke="var(--nice-primary)" stroke-width="1.5"/>
+                        <circle cx="12" cy="12" r="3" fill="var(--nice-primary)"/>
+                    </svg>
+                    <span>Select a live recording to watch</span>
+                </div>
+            }
+        </div>
+
+        <!-- ── Right panel ───────────────────────────────────────────────── -->
+        <div class="nc-rightpanel">
+
+            <!-- My Recording controls -->
+            <div class="nc-rp-section">
+                <div class="nc-rp-title">My Recording</div>
+                @if (!string.IsNullOrEmpty(_recStatusMsg))
+                {
+                    <div style="font-size:.72rem;color:@(_recError ? "#fca5a5" : "var(--nice-text-muted)");margin-bottom:6px">
+                        @_recStatusMsg
+                    </div>
+                }
+                @if (!_isRecording)
+                {
+                    <button class="btn--action btn--primary"
+                            disabled="@_recBusy"
+                            @onclick="StartMyRecording">
+                        @(_recBusy ? "Starting…" : "▶ Start Recording")
+                    </button>
+                }
+                else
+                {
+                    <div style="font-size:.72rem;color:var(--nice-text-muted);margin-bottom:6px">
+                        Duration&nbsp; <b style="color:var(--nice-text)">@RecDuration</b>
+                        &nbsp;·&nbsp;
+                        @FormatBytes(_recBytes)
+                    </div>
+                    <button class="btn--action btn--danger"
+                            disabled="@_recBusy"
+                            @onclick="StopMyRecording">
+                        @(_recBusy ? "Stopping…" : "■ Stop Recording")
+                    </button>
+                    @if (_recWhispers.Count > 0)
+                    {
+                        <div style="margin-top:6px;font-size:.7rem;color:#fca5a5">
+                            @_recWhispers.Count whisper(s) received
+                        </div>
+                    }
+                }
+            </div>
+
+            <!-- Session stats -->
+            <div class="nc-rp-section">
+                <div class="nc-rp-title">Session stats</div>
+                <div class="stat-grid">
+                    <div class="stat-card"><div class="n n--red">@_live.Count</div><div class="lbl">Live now</div></div>
+                    <div class="stat-card"><div class="n">@_stoppedCount</div><div class="lbl">Ended today</div></div>
+                    <div class="stat-card"><div class="n" style="font-size:.85rem">@_totalSizeFmt</div><div class="lbl">Total saved</div></div>
+                    <div class="stat-card"><div class="n n--primary" style="font-size:.85rem">@_totalChunks</div><div class="lbl">Chunks rx</div></div>
+                </div>
+            </div>
+
+            @if (_selected != null)
+            {
+                <div class="nc-rp-section">
+                    <div class="nc-rp-title">Selected</div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Agent&nbsp;</span><span class="nc-rp-val">@_selected.AgentDisplayName</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Started</span><span class="nc-rp-val">@_selected.StartedAt.ToLocalTime().ToString("HH:mm:ss")</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Size&nbsp;&nbsp;</span><span class="nc-rp-val">@_selected.FileSizeFmt</span></div>
+                    <button class="btn--action" @onclick="CopyStreamUrl">Copy stream URL</button>
+                </div>
+            }
+
+            <div class="nc-rp-section">
+                <div class="nc-rp-title">Actions</div>
+                <button class="btn--action" @onclick="RefreshLive">Refresh live list</button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+@code {
+    // ── Supervisor state ──────────────────────────────────────────────────
+    string _initials    = "SS";
+    string _selectedId  = "";
+    string _whisperText = "";
+    int    _chunkCount  = 0;
+    int    _stoppedCount = 0;
+    int    _totalChunks  = 0;
+    long   _totalBytes   = 0;
+    string _hubError     = "";
+
+    Dictionary<string, LiveRecordingInfo> _live = new();
+    List<RecordingWhisper> _whispers = new();   // whispers sent by THIS supervisor
+
+    LiveRecordingInfo? _selected =>
+        _selectedId.Length > 0 && _live.TryGetValue(_selectedId, out var s) ? s : null;
+
+    string _totalSizeFmt => FormatBytes(_totalBytes);
+
+    // ── My Recording state ────────────────────────────────────────────────
+    bool     _isRecording  = false;
+    bool     _recBusy      = false;
+    string   _myRecordingId = "";
+    long     _recBytes     = 0;
+    DateTime _recStart     = DateTime.UtcNow;
+    string   _recStatusMsg = "";
+    bool     _recError     = false;
+    System.Threading.Timer? _recTimer;
+    List<RecordingWhisper> _recWhispers = new();   // whispers received while recording
+
+    string RecDuration
+    {
+        get
+        {
+            if (!_isRecording) return "0s";
+            var elapsed = DateTime.UtcNow - _recStart;
+            return elapsed.TotalHours >= 1
+                ? $"{(int)elapsed.TotalHours}h {elapsed.Minutes:D2}m {elapsed.Seconds:D2}s"
+                : elapsed.TotalMinutes >= 1
+                    ? $"{elapsed.Minutes}m {elapsed.Seconds:D2}s"
+                    : $"{elapsed.Seconds}s";
+        }
+    }
+
+    // ── Hub status ────────────────────────────────────────────────────────
+    string HubLabel => RecHub.ConnectionState switch
+    {
+        HubConnectionState.Connected    => "Connected",
+        HubConnectionState.Connecting   => "Connecting…",
+        HubConnectionState.Reconnecting => "Reconnecting…",
+        _                               => "Disconnected"
+    };
+    string HubColor => RecHub.ConnectionState == HubConnectionState.Connected
+        ? "var(--nice-success)" : "#fca5a5";
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.Current.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        _initials = Initials(Auth.Current.DisplayName);
+
+        // Subscribe to hub events
+        RecHub.OnRecordingStarted  += OnRecordingStarted;
+        RecHub.OnRecordingStopped  += OnRecordingStopped;
+        RecHub.OnRecordingChunk    += OnRecordingChunk;
+        RecHub.OnLiveSnapshot      += OnLiveSnapshot;
+        RecHub.OnRecordingWhisper  += OnRecordingWhisperReceived;
+        RecHub.OnStateChanged      += () => InvokeAsync(StateHasChanged);
+
+        // Connect to hub (separate try/catch so join-group error is reported distinctly)
+        try
+        {
+            await RecHub.ConnectAsync();
+        }
+        catch (Exception ex)
+        {
+            _hubError = $"Connect failed: {ex.Message}";
+            Console.Error.WriteLine($"RecordingHub connect failed: {ex.Message}");
+            StateHasChanged();
+            return;
+        }
+
+        // Join the StandAlone group for this application
+        try
+        {
+            await RecHub.JoinStandAloneAsync(Auth.Current.ApplicationId);
+        }
+        catch (Exception ex)
+        {
+            _hubError = $"Join group failed: {ex.Message}";
+            Console.Error.WriteLine($"RecordingHub JoinStandAlone failed: {ex.Message}");
+            StateHasChanged();
+        }
+
+        // REST fallback — fetch live list with proper auth headers
+        await RefreshLive();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _recTimer?.Dispose();
+
+        // Stop active recording before leaving
+        if (_isRecording && !string.IsNullOrEmpty(_myRecordingId))
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("agentRecorder.stop");
+                await RecHub.StopRecordingAsync(_myRecordingId);
+            }
+            catch { /* best-effort */ }
+        }
+
+        RecHub.OnRecordingStarted -= OnRecordingStarted;
+        RecHub.OnRecordingStopped -= OnRecordingStopped;
+        RecHub.OnRecordingChunk   -= OnRecordingChunk;
+        RecHub.OnLiveSnapshot     -= OnLiveSnapshot;
+        RecHub.OnRecordingWhisper -= OnRecordingWhisperReceived;
+        await RecHub.DisconnectAsync();
+    }
+
+    // ── Hub event handlers ────────────────────────────────────────────────
+    void OnRecordingStarted(LiveRecordingInfo info)
+    {
+        _live[info.RecordingId] = info;
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnRecordingStopped(string recordingId)
+    {
+        if (_live.Remove(recordingId))
+        {
+            _stoppedCount++;
+            if (_selectedId == recordingId)
+                _selectedId = _live.Keys.FirstOrDefault() ?? "";
+        }
+
+        // If MY recording was stopped externally (e.g. server-side forced stop)
+        if (recordingId == _myRecordingId)
+        {
+            _isRecording   = false;
+            _myRecordingId = "";
+            _recBusy       = false;
+            _recStatusMsg  = "Recording stopped.";
+            _recTimer?.Dispose();
+            _recTimer = null;
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnRecordingChunk(string recordingId, int seq, int sizeBytes)
+    {
+        if (_live.TryGetValue(recordingId, out var info))
+        {
+            info.BytesWritten += sizeBytes;
+            _totalBytes       += sizeBytes;
+        }
+        if (recordingId == _selectedId) _chunkCount++;
+        if (recordingId == _myRecordingId) _recBytes += sizeBytes;
+        _totalChunks++;
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnLiveSnapshot(List<LiveRecordingInfo> snapshot)
+    {
+        foreach (var s in snapshot)
+            _live[s.RecordingId] = s;
+
+        // Only auto-select if nothing is selected yet and no own recording in progress
+        if (string.IsNullOrEmpty(_selectedId) && _live.Count > 0 && string.IsNullOrEmpty(_myRecordingId))
+            _selectedId = _live.Keys.First();
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    void OnRecordingWhisperReceived(RecordingWhisper whisper)
+    {
+        // Only store whispers that are for MY active recording
+        if (whisper.RecordingId == _myRecordingId)
+        {
+            _recWhispers.Add(whisper);
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // ── My Recording: start / stop ────────────────────────────────────────
+    async Task StartMyRecording()
+    {
+        if (_recBusy || _isRecording) return;
+        _recBusy      = true;
+        _recError     = false;
+        _recStatusMsg = "Requesting screen access…";
+        StateHasChanged();
+
+        try
+        {
+            var (recordingId, _) = await RecHub.StartRecordingAsync(Auth.Current.ApplicationId);
+            if (string.IsNullOrEmpty(recordingId))
+            {
+                _recStatusMsg = "Failed to start — hub did not return a recording ID.";
+                _recError     = true;
+                _recBusy      = false;
+                StateHasChanged();
+                return;
+            }
+
+            _myRecordingId = recordingId;
+            _recBytes      = 0;
+            _recStart      = DateTime.UtcNow;
+            _recWhispers.Clear();
+
+            var apiBase  = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+            var chunkUrl = $"{apiBase}/api/v1/collaboration/recordings/{_myRecordingId}/chunks";
+            await JS.InvokeVoidAsync("agentRecorder.start", _myRecordingId, chunkUrl, Auth.Current.Token);
+
+            _isRecording  = true;
+            _recBusy      = false;
+            _recStatusMsg = "";
+
+            // Seed the sidebar immediately (OnRecordingStarted will overwrite when SignalR echo arrives)
+            if (!_live.ContainsKey(_myRecordingId))
+            {
+                _live[_myRecordingId] = new LiveRecordingInfo
+                {
+                    RecordingId      = _myRecordingId,
+                    AgentDisplayName = Auth.Current.DisplayName,
+                    AgentUserId      = Auth.Current.UserId,
+                    StartedAt        = _recStart,
+                    BytesWritten     = 0
+                };
+            }
+
+            // Tick timer for duration display
+            _recTimer = new System.Threading.Timer(_ =>
+                InvokeAsync(StateHasChanged), null, 1000, 1000);
+        }
+        catch (Exception ex)
+        {
+            _recStatusMsg = $"Error: {ex.Message}";
+            _recError     = true;
+            _recBusy      = false;
+        }
+
+        StateHasChanged();
+    }
+
+    async Task StopMyRecording()
+    {
+        if (_recBusy || !_isRecording || string.IsNullOrEmpty(_myRecordingId)) return;
+        _recBusy      = true;
+        _recStatusMsg = "Stopping…";
+        StateHasChanged();
+
+        try
+        {
+            await JS.InvokeVoidAsync("agentRecorder.stop");
+            await RecHub.StopRecordingAsync(_myRecordingId);
+            _recStatusMsg  = "Recording saved.";
+            _recError      = false;
+        }
+        catch (Exception ex)
+        {
+            _recStatusMsg = $"Stop error: {ex.Message}";
+            _recError     = true;
+        }
+        finally
+        {
+            _isRecording   = false;
+            _myRecordingId = "";
+            _recBusy       = false;
+            _recTimer?.Dispose();
+            _recTimer = null;
+        }
+
+        StateHasChanged();
+    }
+
+    // ── Supervisor: select / watch / whisper ──────────────────────────────
+    void SelectSession(LiveRecordingInfo info)
+    {
+        _selectedId = info.RecordingId;
+        _chunkCount = 0;
+        if (info.RecordingId != _myRecordingId) _whispers.Clear();
+        StateHasChanged();
+
+        InvokeAsync(async () =>
+        {
+            await RecHub.WatchRecordingAsync(info.RecordingId);
+            await Task.Delay(80);  // let Blazor render the <video> element
+            var apiBase   = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+            var streamUrl = $"{apiBase}/api/v1/collaboration/recordings/{info.RecordingId}/stream";
+            await JS.InvokeVoidAsync("supervisorRecording.attachStream",
+                $"rec-video-{info.RecordingId}", streamUrl);
+            StateHasChanged();
+        });
+    }
+
+    async Task SendWhisper()
+    {
+        if (_selected == null || string.IsNullOrWhiteSpace(_whisperText)) return;
+        var msg = _whisperText.Trim();
+        _whisperText = "";
+        _whispers.Add(new RecordingWhisper
+        {
+            RecordingId = _selected.RecordingId,
+            Message     = msg,
+            FromName    = Auth.Current.DisplayName,
+            SentAt      = DateTime.UtcNow
+        });
+        await RecHub.WhisperToAgentAsync(_selected.RecordingId, msg);
+    }
+
+    async Task OnWhisperKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendWhisper();
+    }
+
+    async Task RefreshLive()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, "api/v1/collaboration/recordings/live");
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {Auth.Current.Token}");
+            req.Headers.TryAddWithoutValidation("X-Api-Key", "chat-ui-key");
+            var resp = await Http.SendAsync(req);
+            if (resp.IsSuccessStatusCode)
+            {
+                var list = await resp.Content.ReadFromJsonAsync<List<LiveRecordingInfo>>();
+                if (list is not null)
+                    foreach (var r in list)
+                        _live[r.RecordingId] = r;
+                StateHasChanged();
+            }
+        }
+        catch { /* hub snapshot is the primary source; REST is fallback */ }
+    }
+
+    async Task CopyStreamUrl()
+    {
+        if (_selected == null) return;
+        var url = $"{Nav.BaseUri}api/v1/collaboration/recordings/{_selected.RecordingId}/stream";
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", url);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1_073_741_824 => $"{bytes / 1_073_741_824.0:F1} GB",
+        >= 1_048_576     => $"{bytes / 1_048_576.0:F1} MB",
+        >= 1_024         => $"{bytes / 1_024.0:F1} KB",
+        _                => $"{bytes} B"
+    };
+
+    static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length > 0 ? name[..Math.Min(2, name.Length)].ToUpper() : "??";
+    }
+
+    static string AvatarColor(string name)
+    {
+        var colors = new[] { "#003727","#1d4ed8","#7c3aed","#be185d","#b45309","#0f766e" };
+        var idx = Math.Abs(name.GetHashCode()) % colors.Length;
+        return colors[idx];
+    }
+}

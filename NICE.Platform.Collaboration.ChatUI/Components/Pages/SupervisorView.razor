@@ -1,0 +1,806 @@
+@page "/supervisor"
+@layout BlankLayout
+@inject IAuthService Auth
+@inject ICollaborationHubService Hub
+@inject IDemoApiService Demo
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject IConfiguration Config
+@implements IAsyncDisposable
+
+<div class="nc-page">
+
+    <!-- ── Top bar ──────────────────────────────────────────── -->
+    <div class="nc-topbar">
+        <div class="nc-topbar-brand" style="display:flex;align-items:center;gap:8px">
+            <!-- Headphone icon -->
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:.9">
+                <path d="M12 3C7.03 3 3 7.03 3 12v5a2 2 0 002 2h1a1 1 0 001-1v-5a1 1 0 00-1-1H4v-1a8 8 0 0116 0v1h-3a1 1 0 00-1 1v5a1 1 0 001 1h1a2 2 0 002-2v-5c0-4.97-4.03-9-9-9z" fill="white"/>
+            </svg>
+            <span>NASS Collaboration</span>
+            @if (!string.IsNullOrEmpty(Auth.Current.ApplicationName))
+            {
+                <span style="background:rgba(255,255,255,.2);border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:600;letter-spacing:.02em">@Auth.Current.ApplicationName</span>
+            }
+        </div>
+        <div class="nc-topbar-meta" style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;color:rgba(255,255,255,.55);font-weight:500;letter-spacing:.04em;text-transform:uppercase">Supervisor Dashboard</span>
+            <span style="color:rgba(255,255,255,.35)">·</span>
+            <span>Active collabs <b>@_activeCollabs.Count</b></span>
+            @if (Hub.ConnectionState == HubConnectionState.Connected)
+            {
+                <span class="tag tag--green">● Connected</span>
+            }
+            else
+            {
+                <span class="tag tag--red">○ Offline</span>
+            }
+        </div>
+        <div class="nc-topbar-right" style="gap:10px">
+            <span style="font-size:.82rem;color:rgba(255,255,255,.85);font-weight:500;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@Auth.Current.DisplayName</span>
+            <div class="nc-avatar-btn" style="background:@AvatarColor(Auth.Current.DisplayName)" title="@Auth.Current.DisplayName">@_initials</div>
+            <button @onclick="SignOut"
+                    style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:6px;padding:4px 10px;font-size:.75rem;font-weight:600;cursor:pointer;white-space:nowrap"
+                    title="Sign out">
+                Sign out
+            </button>
+        </div>
+    </div>
+
+    <div class="nc-body">
+
+        <!-- ── Left sidebar — active collabs ─────────────────── -->
+        <div class="nc-sidebar">
+            <div class="nc-sidebar-hd">Live sessions (@_activeCollabs.Count)</div>
+            <div class="nc-sidebar-scroll">
+                @if (_activeCollabs.Count == 0)
+                {
+                    <div style="padding:16px 12px;font-size:.78rem;color:var(--nice-text-muted);text-align:center">
+                        No active sessions yet.<br/>Requests appear as customers connect.
+                    </div>
+                }
+                @foreach (var c in _activeCollabs)
+                {
+                    <div class="nc-list-item @(c.CollabId == _watchingCollabId ? "nc-list-item--active" : "")"
+                         @onclick="() => WatchCollab(c.CollabId)">
+                        <div class="nc-item-av" style="background:@AvatarColor(c.CustomerName)">@Initials(c.CustomerName)</div>
+                        <div class="nc-item-body">
+                            <div class="nc-item-name">@c.CustomerName</div>
+                            <div class="nc-item-sub">
+                                @(c.IsJoined ? "✓ Joined" : "Click to watch")
+                                · @c.StartedAt.ToString("HH:mm")
+                            </div>
+                            @if (c.IsScreenSharing)
+                            {
+                                <span class="tag tag--blue" style="font-size:.65rem">Screen sharing</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- Live agents online (from hub) -->
+            @if (_agents.Count > 0)
+            {
+                <div class="nc-sidebar-hd" style="margin-top:8px">Agents online (@_agents.Count)</div>
+                <div class="nc-sidebar-scroll">
+                    @foreach (var a in _agents)
+                    {
+                        <div class="nc-agent-row">
+                            <span class="sdot sdot--on"></span>
+                            <div class="nc-item-av" style="background:@AvatarColor(a.DisplayName)">@Initials(a.DisplayName)</div>
+                            <div style="flex:1;min-width:0">
+                                <div class="nc-item-name">@a.DisplayName</div>
+                                <div class="nc-item-sub" style="color:var(--nice-text-muted);font-size:.72rem">● Online</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- ── Centre panel — watching ──────────────────────── -->
+        <div class="nc-center">
+            @if (_watchingCollab != null)
+            {
+                <div class="nc-session-hd">
+                    <div class="nc-session-title" style="font-size:.85rem">
+                        <div class="nc-item-av" style="background:@AvatarColor(_watchingCollab.CustomerName);width:28px;height:28px;font-size:.7rem">
+                            @Initials(_watchingCollab.CustomerName)
+                        </div>
+                        Watching: <b>@_watchingCollab.CustomerName</b>
+                        @if (!_watchingCollab.IsJoined)
+                        {
+                            <button class="btn btn--primary" style="margin-left:10px" @onclick="JoinCurrentCollab"
+                                    disabled="@_joiningCollab">
+                                @(_joiningCollab ? "Joining…" : "Join session")
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="tag tag--green">Joined</span>
+                        }
+                    </div>
+                    <div class="nc-session-actions">
+                        @if (_watchingCollab.IsJoined)
+                        {
+                            <button class="btn btn--purple" @onclick="OpenWhisper">
+                                @(_whisperOpen ? "Close whisper" : "Whisper to agent")
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <!-- Chat transcript / group chat -->
+                <div class="nc-ro-label" style="padding:4px 16px 0;display:flex;align-items:center;gap:8px">
+                    @if (_watchingCollab.IsJoined)
+                    {
+                        <span style="font-weight:600;font-size:.78rem">Group chat</span>
+                        <span class="tag tag--green" style="font-size:.65rem">● You are in this conversation</span>
+                    }
+                    else
+                    {
+                        <span style="font-weight:600;font-size:.78rem">Chat transcript</span>
+                        @if (_loadingHistory)
+                        {
+                            <span style="color:var(--nice-text-muted);font-size:.75rem">(loading history…)</span>
+                        }
+                        else
+                        {
+                            <span style="color:var(--nice-text-muted);font-size:.75rem">(read-only — join to participate)</span>
+                        }
+                    }
+                </div>
+                <div class="nc-chat" id="sup-chat">
+                    @foreach (var m in _watchingCollab.Messages)
+                    {
+                        @if (m.IsWhisper)
+                        {
+                            <!-- Whisper: purple pill — agent only -->
+                            <div class="nc-msg-row">
+                                <div class="nc-bubble nc-bubble--whisper">
+                                    <span class="wh-label">🤫 Whisper · @m.SenderName</span>
+                                    @m.Content
+                                </div>
+                            </div>
+                        }
+                        else if (m.IsMine)
+                        {
+                            <!-- Supervisor's own messages: right-aligned blue -->
+                            <div class="nc-msg-row nc-msg-row--user">
+                                <div class="nc-bubble nc-bubble--user">
+                                    <span style="font-size:.62rem;opacity:.75;display:block;margin-bottom:2px">You (Supervisor)</span>
+                                    @m.Content
+                                </div>
+                                <span class="nc-msg-time">@m.SentAt.ToString("HH:mm")</span>
+                            </div>
+                        }
+                        else if (m.IsBot)
+                        {
+                            <!-- System / bot notice: grey italic -->
+                            <div class="nc-msg-row" style="justify-content:center">
+                                <div style="font-size:.72rem;color:var(--nice-text-muted);font-style:italic;padding:2px 8px">@m.Content</div>
+                            </div>
+                        }
+                        else
+                        {
+                            <!-- Agent or Customer message: left-aligned with colour accent -->
+                            <div class="nc-msg-row nc-msg-row--bot">
+                                <div class="nc-item-av" style="background:@AvatarColor(m.SenderName);width:24px;height:24px;font-size:.6rem;flex-shrink:0;align-self:flex-end">
+                                    @Initials(m.SenderName)
+                                </div>
+                                <div>
+                                    <div class="nc-bubble nc-bubble--bot" style="border-left:3px solid @AvatarColor(m.SenderName)">
+                                        <span style="font-size:.62rem;font-weight:600;color:@AvatarColor(m.SenderName);display:block;margin-bottom:2px">@m.SenderName</span>
+                                        @m.Content
+                                    </div>
+                                    <span class="nc-msg-time">@m.SentAt.ToString("HH:mm")</span>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <!-- Regular group message input (joined supervisors participate in full chat) -->
+                @if (_watchingCollab.IsJoined)
+                {
+                    <div class="nc-input-bar" style="border-top:1px solid var(--nice-border-soft);padding:8px 12px;display:flex;gap:8px;align-items:center">
+                        <input class="nc-chat-input"
+                               style="flex:1;border:1px solid var(--nice-border-soft);border-radius:var(--radius-md);padding:7px 11px;font-size:.83rem;outline:none"
+                               placeholder="Message everyone (customer sees this)…"
+                               value="@_msgText"
+                               @oninput="e => _msgText = e.Value?.ToString() ?? string.Empty"
+                               @onkeydown="OnMsgKey" />
+                        <button class="btn btn--primary" style="padding:7px 14px" @onclick="SendGroupMessage" title="Send">
+                            <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                                <path d="M2 10l16-8-8 16V11L2 10z" fill="white"/>
+                            </svg>
+                        </button>
+                    </div>
+                }
+
+                <!-- Whisper input (agent-only, only when joined and whisper toggled) -->
+                @if (_watchingCollab.IsJoined && _whisperOpen)
+                {
+                    <div class="nc-whisper-bar">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="flex-shrink:0">
+                            <path d="M8 2C5.8 2 4 3.8 4 6c0 1.4.7 2.6 1.8 3.3L5 13l3-1.5 3 1.5-.8-3.7C11.3 8.6 12 7.4 12 6c0-2.2-1.8-4-4-4z" fill="#7c3aed" opacity=".3"/>
+                        </svg>
+                        <span class="nc-whisper-lbl">Whisper (agent only)</span>
+                        <input class="nc-whisper-input"
+                               placeholder="Agent sees this — customer does not…"
+                               @bind="_whisperText"
+                               @bind:event="oninput"
+                               @onkeydown="OnWhisperKey" />
+                        <button class="nc-whisper-send" @onclick="SendWhisper" title="Send whisper">
+                            <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                                <path d="M2 10l16-8-8 16V11L2 10z" fill="white"/>
+                            </svg>
+                        </button>
+                    </div>
+                }
+            }
+            else
+            {
+                <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--nice-text-muted);flex-direction:column;gap:8px">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" opacity=".3">
+                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="var(--nice-primary)" stroke-width="1.5"/>
+                    </svg>
+                    <span>Select a live session to monitor</span>
+                </div>
+            }
+        </div>
+
+        <!-- ── Right panel ──────────────────────────────────── -->
+        <div class="nc-rightpanel" style="@(_watchingCollab?.IsScreenSharing == true ? "overflow:hidden" : "")">
+            <!-- Screen share — takes all available vertical space when active -->
+            @if (_watchingCollab != null && _watchingCollab.IsScreenSharing)
+            {
+                <div style="position:relative;background:#111;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid var(--nice-border)">
+                    <video id="sup-screen-video-@_watchingCollabId"
+                           autoplay playsinline muted
+                           style="width:100%;height:100%;display:block;object-fit:contain;flex:1;min-height:0"
+                           onclick="this.play()"></video>
+                    <div style="position:absolute;top:8px;left:10px;display:flex;align-items:center;gap:5px;background:rgba(0,0,0,.6);border-radius:20px;padding:3px 10px;font-size:.65rem;color:#fff;font-weight:600">
+                        <span style="width:7px;height:7px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite;display:inline-block"></span>
+                        LIVE · SUPERVISING
+                    </div>
+                    <!-- Direct onclick (no Blazor async hop) so browser honours the user-gesture
+                         requirement for requestFullscreen(). -->
+                    <button style="position:absolute;top:8px;right:10px;background:rgba(0,0,0,.55);border:none;border-radius:6px;color:#fff;cursor:pointer;padding:4px 8px;font-size:.72rem"
+                            title="Fullscreen"
+                            onclick="chatHelpers.requestFullscreen('sup-screen-video-@(_watchingCollabId)')">⛶</button>
+                </div>
+            }
+
+            <div class="nc-rp-section">
+                <div class="nc-rp-title">Session overview</div>
+                <div class="stat-grid">
+                    <div class="stat-card"><div class="n n--primary">@_activeCollabs.Count</div><div class="lbl">Active</div></div>
+                    <div class="stat-card"><div class="n n--blue">@_agents.Count</div><div class="lbl">Agents</div></div>
+                </div>
+            </div>
+
+            @if (_watchingCollab != null)
+            {
+                <div class="nc-rp-section">
+                    <div class="nc-rp-title">Session info</div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Customer</span><span class="nc-rp-val">@_watchingCollab.CustomerName</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Started</span><span class="nc-rp-val">@_watchingCollab.StartedAt.ToString("HH:mm")</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Messages</span><span class="nc-rp-val">@_watchingCollab.Messages.Count</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Screen</span>
+                        <span class="nc-rp-val">@(_watchingCollab.IsScreenSharing ? "Sharing" : "Off")</span>
+                    </div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Status</span>
+                        <span class="nc-rp-val">@(_watchingCollab.IsJoined ? "Joined" : "Monitoring")</span>
+                    </div>
+                </div>
+
+                @if (_watchingCollab.IsJoined)
+                {
+                    <div class="nc-rp-section" style="padding-top:0">
+                        <button class="btn btn--secondary" style="width:100%;font-size:.75rem;padding:6px 10px"
+                                @onclick="RefreshStream"
+                                title="Request a fresh screen-share offer from the customer">
+                            ↺ Refresh screen share
+                        </button>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <!-- ── Supervisor invite popup ────────────────────────────── -->
+    @if (_showInvitePopup)
+    {
+        <div style="position:fixed;bottom:24px;right:24px;z-index:300;background:#fff;border:1.5px solid #7c3aed;border-radius:var(--radius-lg);padding:1.25rem;width:320px;box-shadow:0 12px 40px rgba(124,58,237,.25);animation:cw-in .28s cubic-bezier(.34,1.56,.64,1)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <div class="nc-item-av" style="background:#7c3aed;width:38px;height:38px">👁</div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem">Supervisor invite</div>
+                    <div style="font-size:.75rem;color:var(--nice-text-muted)">
+                        @_inviteAgentName invited you to assist with <b>@_inviteCustomer</b>
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn--primary" style="flex:1;background:#7c3aed;border-color:#7c3aed" @onclick="AcceptInvite">Join session</button>
+                <button class="btn btn--danger" style="flex:1" @onclick="DeclineInvite">Decline</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    // ── State ──────────────────────────────────────────────────
+    string _initials         = "SP";
+    string _watchingCollabId = "";
+    string _whisperText      = "";
+    string _msgText          = "";
+    bool   _whisperOpen      = false;
+    bool   _loadingHistory   = false;
+    bool   _joiningCollab    = false;
+
+    // ── Supervisor invite popup ────────────────────────────────
+    bool   _showInvitePopup   = false;
+    string _inviteCollabId    = "";
+    string _inviteCustomer    = "";
+    string _inviteAgentName   = "";
+
+    WatchedCollab? _watchingCollab => _activeCollabs.FirstOrDefault(c => c.CollabId == _watchingCollabId);
+
+    List<WatchedCollab>  _activeCollabs = new();
+    List<OnlineUserInfo> _agents        = new();
+
+    // Pending screen-share actions (set before StateHasChanged; consumed in OnAfterRenderAsync)
+    string? _pendingOfferCollabId    = null;
+    string? _pendingOfferSdp         = null;
+    string? _pendingReattachCollabId = null;
+
+    // ── Lifecycle ──────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.Current.IsAuthenticated) { Nav.NavigateTo("/login", replace: true); return; }
+
+        _initials = Initials(Auth.Current.DisplayName);
+
+        // Wire hub events
+        Hub.OnNewCollaborationRequest   += OnNewRequest;
+        Hub.OnCollaborationEnded        += OnCollabEnded;
+        Hub.OnMessageReceived           += OnMessageReceived;
+        Hub.OnWhisperReceived           += OnWhisperReceived;
+        Hub.OnOffer                     += OnScreenShareOffer;
+        Hub.OnScreenShareStopped        += OnScreenShareStopped;
+        Hub.OnSupervisorInviteReceived  += OnInviteReceived;
+        Hub.OnConnectionChanged         += OnConnectionChanged;
+        Hub.OnForceDisconnected         += OnForceDisconnected;
+        Hub.OnOnlineUsersUpdated        += OnOnlineUsersUpdated;
+
+        if (Hub.ConnectionState != HubConnectionState.Connected)
+        {
+            try { await Hub.ConnectAsync(); }
+            catch (Exception ex) { Console.WriteLine($"Hub connect failed: {ex.Message}"); }
+        }
+
+        // Agent list is populated live via OnOnlineUsersUpdated — no DB fetch needed here.
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.OnNewCollaborationRequest  -= OnNewRequest;
+        Hub.OnCollaborationEnded       -= OnCollabEnded;
+        Hub.OnMessageReceived          -= OnMessageReceived;
+        Hub.OnWhisperReceived          -= OnWhisperReceived;
+        Hub.OnOffer                    -= OnScreenShareOffer;
+        Hub.OnScreenShareStopped       -= OnScreenShareStopped;
+        Hub.OnSupervisorInviteReceived -= OnInviteReceived;
+        Hub.OnConnectionChanged        -= OnConnectionChanged;
+        Hub.OnForceDisconnected        -= OnForceDisconnected;
+        Hub.OnOnlineUsersUpdated       -= OnOnlineUsersUpdated;
+
+        // Release all WebRTC peer connections on page unload
+        try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+    }
+
+    void OnConnectionChanged() => InvokeAsync(StateHasChanged);
+
+    Task OnOnlineUsersUpdated(List<OnlineUserInfo> online) => InvokeAsync(() =>
+    {
+        // Agents list: all online agents (any app), excludes self (supervisor)
+        _agents = online
+            .Where(u => u.UserType == "Agent")
+            .OrderBy(u => u.DisplayName)
+            .ToList();
+        StateHasChanged();
+    });
+
+    // ── Lifecycle — post-render JS interop ────────────────────
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // ① Pending screen-share offer: video element was just created by StateHasChanged above;
+        //    now it's safe to call into JS.
+        if (_pendingOfferCollabId is not null && _pendingOfferSdp is not null)
+        {
+            var collabId = _pendingOfferCollabId;
+            var sdp      = _pendingOfferSdp;
+            _pendingOfferCollabId = null;
+            _pendingOfferSdp      = null;
+
+            try
+            {
+                var videoId         = $"sup-screen-video-{collabId}";
+                var enableRecording = Config.GetValue<bool>("ClientFeatures:EnableRecording", false);
+                var apiBase         = (Config["ApiBaseUrl"] ?? "https://localhost:65167/").TrimEnd('/') + "/";
+                var uploadUrl       = $"{apiBase}api/v1/demo/recordings/upload";
+
+                Console.WriteLine($"[Supervisor] receiveOffer collab={collabId[..Math.Min(8, collabId.Length)]}");
+
+                await JS.InvokeVoidAsync("screenShare.configure", new
+                {
+                    uploadUrl,
+                    enableRecording,
+                    collaborationId = collabId
+                });
+
+                var answerSdp = await JS.InvokeAsync<string>(
+                    "screenShare.receiveOffer", collabId, sdp, videoId, enableRecording);
+
+                if (!string.IsNullOrEmpty(answerSdp))
+                {
+                    await Hub.ShareScreenAnswerAsync(collabId, answerSdp);
+                    StateHasChanged();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Supervisor] receiveOffer error: {ex.Message}");
+            }
+        }
+
+        // ② Pending stream reattach: supervisor switched to a collab whose stream is already live;
+        //    the video element was just remounted — reconnect the stored MediaStream.
+        if (_pendingReattachCollabId is not null)
+        {
+            var collabId = _pendingReattachCollabId;
+            _pendingReattachCollabId = null;
+            try
+            {
+                await JS.InvokeVoidAsync(
+                    "screenShare.reattachStream", collabId, $"sup-screen-video-{collabId}");
+            }
+            catch { }
+        }
+    }
+
+    // ── SignalR event handlers ─────────────────────────────────
+    async Task OnNewRequest(string collabId, string customerName, string customerUserId)
+    {
+        await InvokeAsync(() =>
+        {
+            if (_activeCollabs.Any(c => c.CollabId == collabId)) return;
+            _activeCollabs.Insert(0, new WatchedCollab(collabId, customerName));
+            StateHasChanged();
+        });
+    }
+
+    async Task OnCollabEnded(string collabId)
+    {
+        await InvokeAsync(async () =>
+        {
+            var c = _activeCollabs.FirstOrDefault(x => x.CollabId == collabId);
+            if (c != null)
+            {
+                _activeCollabs.Remove(c);
+                // Release WebRTC PC if this session had a live screen share
+                if (c.IsScreenSharing)
+                    try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+            }
+
+            // Clear any pending screen-share state for this collab
+            if (_pendingOfferCollabId   == collabId) { _pendingOfferCollabId = null; _pendingOfferSdp = null; }
+            if (_pendingReattachCollabId == collabId)   _pendingReattachCollabId = null;
+
+            if (_watchingCollabId == collabId) _watchingCollabId = "";
+            StateHasChanged();
+        });
+    }
+
+    async Task OnMessageReceived(ChatMessage msg)
+    {
+        await InvokeAsync(async () =>
+        {
+            // Skip own messages — added locally in SendGroupMessage to avoid flicker
+            // IsMine is never set by the server; compare SenderId instead
+            if (msg.SenderId == Auth.Current.UserId) return;
+            var c = _activeCollabs.FirstOrDefault(x => x.CollabId == msg.CollaborationId);
+            if (c == null) return;
+            // Avoid duplicate if we already loaded history
+            if (!c.Messages.Any(m => m.Content == msg.Content && m.SentAt == msg.SentAt))
+                c.Messages.Add(msg);
+            StateHasChanged();
+            if (_watchingCollabId == msg.CollaborationId)
+                try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "sup-chat"); } catch { }
+        });
+    }
+
+    async Task OnWhisperReceived(ChatMessage msg)
+    {
+        await InvokeAsync(async () =>
+        {
+            // Skip own whispers — added locally in SendWhisper() to avoid duplicate
+            // IsMine is never set by the server; compare SenderId instead
+            if (msg.SenderId == Auth.Current.UserId) return;
+            var c = _activeCollabs.FirstOrDefault(x => x.CollabId == msg.CollaborationId);
+            if (c == null) return;
+            c.Messages.Add(msg);
+            StateHasChanged();
+            if (_watchingCollabId == msg.CollaborationId)
+                try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "sup-chat"); } catch { }
+        });
+    }
+
+    async Task OnScreenShareOffer(string collabId, string sdp)
+    {
+        // Only accept offers for the collab we are currently watching.
+        var watching = _watchingCollab;
+        if (watching == null || watching.CollabId != collabId) return;
+
+        await InvokeAsync(() =>
+        {
+            // Mark sharing so Blazor renders the <video> element, then
+            // OnAfterRenderAsync will do the JS interop once the DOM is ready.
+            watching.IsScreenSharing  = true;
+            _pendingOfferCollabId     = collabId;
+            _pendingOfferSdp          = sdp;
+            StateHasChanged();
+        });
+    }
+
+    // ── Actions ────────────────────────────────────────────────
+    async Task WatchCollab(string collabId)
+    {
+        _watchingCollabId        = collabId;
+        _whisperOpen             = false;
+        _pendingReattachCollabId = null;
+
+        // Join the SilentMonitor group for this collab so real-time whispers arrive
+        // even before the supervisor formally clicks "Join session".
+        try { await Hub.JoinSilentlyAsync(collabId); } catch { }
+
+        // If this collab is already sharing a stream, schedule a reattach so
+        // OnAfterRenderAsync can reconnect the stored MediaStream to the new <video> element.
+        var target = _activeCollabs.FirstOrDefault(c => c.CollabId == collabId);
+        if (target?.IsScreenSharing == true)
+            _pendingReattachCollabId = collabId;
+
+        StateHasChanged();
+
+        // Load history for this collab if not already loaded
+        var c = _watchingCollab;
+        if (c != null && !c.HistoryLoaded && Guid.TryParse(collabId, out var guid))
+        {
+            _loadingHistory = true;
+            StateHasChanged();
+            try
+            {
+                var msgs = await Demo.GetCollaborationMessagesAsync(guid);
+                if (msgs.Any())
+                {
+                    // Prepend history (only messages not already streamed in real-time)
+                    var existingContents = c.Messages.Select(m => m.Content).ToHashSet();
+                    var historyMessages = msgs
+                        .Where(m => !existingContents.Contains(m.Content))
+                        .Select(m => new ChatMessage
+                        {
+                            CollaborationId = collabId,
+                            SenderId        = m.SenderId.ToString(),
+                            SenderName      = m.SenderName,
+                            SenderRole      = m.SenderRole,
+                            Content         = m.Content,
+                            SentAt          = m.SentAt,
+                            IsMine          = m.SenderId.ToString() == Auth.Current.UserId,
+                            IsBot           = m.IsSystemNotice
+                        })
+                        .ToList();
+
+                    // Insert history before any live messages we already received
+                    c.Messages.InsertRange(0, historyMessages);
+                }
+                c.HistoryLoaded = true;
+            }
+            catch (Exception ex) { Console.WriteLine($"[SupervisorView] History load failed for {collabId}: {ex.Message}"); }
+            _loadingHistory = false;
+            StateHasChanged();
+            try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "sup-chat"); } catch { }
+        }
+    }
+
+    async Task JoinCurrentCollab()
+    {
+        // Capture both before any async gap so a session-switch mid-join uses the right values.
+        var collab   = _watchingCollab;
+        var collabId = _watchingCollabId;
+        if (collab == null || _joiningCollab) return;
+
+        _joiningCollab = true;
+        StateHasChanged();
+
+        try
+        {
+            await Hub.SupervisorJoinAsync(collabId);
+            collab.IsJoined = true;
+            // Do NOT auto-open whisper — supervisor joins in full group-chat mode.
+            // Whisper is opt-in via the "Whisper to agent" button.
+
+            StateHasChanged();
+
+            // Request a re-offer: if the customer is screen-sharing the supervisor will receive
+            // the stream. A short delay ensures the group add has propagated on the server.
+            await Task.Delay(500);
+            try { await Hub.RequestScreenOfferAsync(collabId); } catch { }
+        }
+        catch (Exception ex) { Console.WriteLine($"Join error: {ex.Message}"); }
+        _joiningCollab = false;
+        StateHasChanged();
+    }
+
+    void OpenWhisper() { _whisperOpen = !_whisperOpen; }
+
+    /// <summary>Manually re-request the screen-share offer — fallback when auto-request on join didn't fire.</summary>
+    async Task RefreshStream()
+    {
+        var collabId = _watchingCollabId;
+        if (string.IsNullOrEmpty(collabId)) return;
+        try { await Hub.RequestScreenOfferAsync(collabId); }
+        catch (Exception ex) { Console.WriteLine($"RefreshStream error: {ex.Message}"); }
+    }
+
+    async Task SendGroupMessage()
+    {
+        var text = _msgText.Trim();
+        if (string.IsNullOrEmpty(text) || _watchingCollab == null) return;
+        _msgText = "";
+
+        // Optimistic add — hub event skipped for own messages (IsMine guard in OnMessageReceived)
+        _watchingCollab.Messages.Add(new ChatMessage
+        {
+            CollaborationId = _watchingCollabId,
+            SenderId        = Auth.Current.UserId,
+            SenderName      = Auth.Current.DisplayName,
+            Content         = text,
+            IsWhisper       = false,
+            IsMine          = true,
+            SentAt          = DateTime.UtcNow
+        });
+        StateHasChanged();
+
+        try { await Hub.SendMessageAsync(_watchingCollabId, text); }
+        catch (Exception ex) { Console.WriteLine($"Group message error: {ex.Message}"); }
+
+        try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "sup-chat"); } catch { }
+    }
+
+    async Task OnMsgKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SendGroupMessage();
+    }
+
+    /// <summary>User stopped sharing — hide the video player on the supervisor side.</summary>
+    async Task OnScreenShareStopped(string collabId)
+    {
+        await InvokeAsync(async () =>
+        {
+            var c = _activeCollabs.FirstOrDefault(x => x.CollabId == collabId);
+            if (c == null) return;
+            c.IsScreenSharing = false;
+            // Clear any pending offer for this collab if the share stopped before the render completed.
+            if (_pendingOfferCollabId == collabId) { _pendingOfferCollabId = null; _pendingOfferSdp = null; }
+            StateHasChanged();
+            try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+        });
+    }
+
+    /// <summary>Received a supervisor invite from an agent.</summary>
+    async Task OnInviteReceived(string collabId, string customerName, string agentName)
+    {
+        await InvokeAsync(() =>
+        {
+            // Register collab in sidebar if not already present
+            if (!_activeCollabs.Any(c => c.CollabId == collabId))
+                _activeCollabs.Insert(0, new WatchedCollab(collabId, customerName));
+
+            _inviteCollabId  = collabId;
+            _inviteCustomer  = customerName;
+            _inviteAgentName = agentName;
+            _showInvitePopup = true;
+            StateHasChanged();
+        });
+    }
+
+    async Task AcceptInvite()
+    {
+        _showInvitePopup = false;
+        await WatchCollab(_inviteCollabId);
+        StateHasChanged();
+        await JoinCurrentCollab();
+    }
+
+    void DeclineInvite() { _showInvitePopup = false; }
+
+    async Task SignOut()
+    {
+        try { await Hub.DisconnectAsync(); } catch { }
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login", replace: true);
+    }
+
+    void OnForceDisconnected(string reason)
+    {
+        InvokeAsync(async () =>
+        {
+            await JS.InvokeVoidAsync("alert", $"Session ended: {reason}");
+            await Auth.LogoutAsync();
+            Nav.NavigateTo("/login", replace: true);
+        });
+    }
+
+    async Task FullscreenVideo(string videoElementId)
+    {
+        try { await JS.InvokeVoidAsync("chatHelpers.requestFullscreen", videoElementId); }
+        catch { }
+    }
+
+    // ── Avatar helpers ─────────────────────────────────────────────────────────
+    private static readonly string[] _avatarColors =
+        ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef4444","#14b8a6"];
+
+    static string AvatarColor(string name)
+    {
+        var hash = name.Aggregate(0, (acc, c) => acc ^ c);
+        return _avatarColors[Math.Abs(hash) % _avatarColors.Length];
+    }
+
+    static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name.Length > 0 ? name[0].ToString().ToUpperInvariant() : "?";
+    }
+
+    async Task OnWhisperKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendWhisper();
+    }
+
+    private async Task SendWhisper()
+    {
+        var text = _whisperText.Trim();
+        if (string.IsNullOrEmpty(text) || _watchingCollab == null) return;
+
+        _whisperText = "";
+
+        _watchingCollab.Messages.Add(new ChatMessage
+        {
+            CollaborationId = _watchingCollabId,
+            SenderId        = Auth.Current.UserId,
+            SenderName      = Auth.Current.DisplayName,
+            SenderRole      = "Supervisor",
+            Content         = text,
+            IsWhisper       = true,
+            IsMine          = true,
+            SentAt          = DateTime.UtcNow
+        });
+
+        try
+        {
+            await Hub.SendWhisperAsync(_watchingCollabId, text);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SendWhisper error: {ex.Message}");
+        }
+
+        StateHasChanged();
+    }
+}

@@ -33,6 +33,7 @@ public class ApiKeyMiddleware(RequestDelegate next, ILogger<ApiKeyMiddleware> lo
         var path = context.Request.Path;
         if (path.StartsWithSegments("/swagger")                       ||
             path.StartsWithSegments("/api/v1/collaboration/auth")     ||
+            path.StartsWithSegments("/api/v1/demo")                   ||  // demo/setup — no key needed
             path.StartsWithSegments("/hubs")                          ||
             path.StartsWithSegments("/health"))
         {
@@ -70,7 +71,7 @@ public class ApiKeyMiddleware(RequestDelegate next, ILogger<ApiKeyMiddleware> lo
 
     private static string ComputeSha256(string input)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        var bytes  = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }

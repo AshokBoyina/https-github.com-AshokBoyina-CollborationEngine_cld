@@ -1,0 +1,431 @@
+@page "/chat/internal"
+@layout BlankLayout
+@inject IAuthService             Auth
+@inject ICollaborationHubService Hub
+@inject IDemoApiService          Demo
+@inject NavigationManager        Nav
+@inject IJSRuntime               JS
+@implements IAsyncDisposable
+
+<PageTitle>Internal Chat — NASS Collaboration</PageTitle>
+
+<div class="nc-page">
+
+<!-- ══ Top-bar ════════════════════════════════════════════════════════════════ -->
+<div class="nc-topbar">
+    <div class="nc-topbar-brand">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             stroke-linejoin="round" style="margin-right:6px;vertical-align:middle">
+            <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+            <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+        </svg>
+        NASS Collaboration
+    </div>
+    <span class="nc-topbar-app">@Auth.Current.ApplicationName</span>
+    <span class="nc-topbar-label">Internal Chat</span>
+    <div class="nc-topbar-right">
+        <span class="nc-topbar-user">@Auth.Current.DisplayName</span>
+        @if (_joined)
+        {
+            <button class="nc-btn nc-btn-ghost" style="font-size:.78rem;padding:4px 10px"
+                    @onclick="LeaveChat">← Back to directory</button>
+        }
+        <button class="nc-btn nc-btn-ghost" style="font-size:.78rem;padding:4px 10px"
+                @onclick="SignOut">Sign out</button>
+    </div>
+</div>
+<ConnectionStatus State="Hub.ConnectionState" />
+
+<!-- ══ Main layout — sidebar + content ══════════════════════════════════════ -->
+<div class="ic-shell">
+
+    <!-- ── Left sidebar: online user directory ───────────────────────────── -->
+    <div class="ic-sidebar">
+        <div class="ic-sidebar-header">
+            <span>
+                Staff online
+                @if (_users.Count > 0)
+                {
+                    <span style="font-size:.72rem;color:var(--nice-muted);margin-left:4px">(@_users.Count)</span>
+                }
+            </span>
+            <button class="ic-icon-btn" title="Refresh" @onclick="LoadUsersAsync">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+            </button>
+        </div>
+
+        @if (_loadingUsers)
+        {
+            <div class="ic-sidebar-empty">Loading…</div>
+        }
+        else if (_users.Count == 0)
+        {
+            <div class="ic-sidebar-empty" style="padding:20px 12px;text-align:center;line-height:1.5">
+                <div style="font-size:1.4rem;margin-bottom:8px">👋</div>
+                <div style="font-weight:600;color:var(--nice-text)">You're the first one here</div>
+                <div style="font-size:.78rem;color:var(--nice-muted);margin-top:4px">Other internal users will appear here when they connect.</div>
+            </div>
+        }
+        else
+        {
+            <ul class="ic-user-list">
+                @foreach (var u in _users)
+                {
+                    var isActive = _selectedUserId == u.UserId.ToString() && _joined;
+                    <li class="ic-user-item @(isActive ? "ic-user-item--active" : "")"
+                        @onclick="() => SelectUser(u)">
+                        <!-- Online indicator + avatar -->
+                        <div style="position:relative">
+                            <div class="ic-user-av" style="background:#06b6d4">
+                                @Initials(u.DisplayName)
+                            </div>
+                            <span style="position:absolute;bottom:0;right:0;width:9px;height:9px;
+                                         background:#22c55e;border-radius:50%;border:2px solid var(--nc-surface,#fff)"></span>
+                        </div>
+                        <!-- Name only — all staff are treated equally in this view -->
+                        <div class="ic-user-info">
+                            <div class="ic-user-name">@u.DisplayName</div>
+                        </div>
+                        <!-- Chat hint -->
+                        <div class="ic-user-action">
+                            @if (isActive)
+                            {
+                                <span style="font-size:.7rem;color:var(--nice-primary);font-weight:600">● Active</span>
+                            }
+                            else
+                            {
+                                <span class="ic-chat-hint">Chat →</span>
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <!-- ── Right panel: chat or placeholder ──────────────────────────────── -->
+    <div class="ic-main">
+
+        @if (!_joined)
+        {
+            <!-- Placeholder when no conversation is selected -->
+            <div class="ic-placeholder">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                     stroke="var(--nice-muted)" stroke-width="1.5"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <div style="margin-top:12px;color:var(--nice-muted);font-size:.9rem">
+                    @if (_users.Count == 0)
+                    {
+                        <span>No other staff are online right now.</span>
+                    }
+                    else
+                    {
+                        <span>Select a person from the left to start a chat.</span>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Active chat panel -->
+            <div class="ic-chat-panel">
+
+                <!-- Chat header -->
+                <div class="ic-chat-header">
+                    <div class="ic-user-av" style="background:#06b6d4;width:32px;height:32px;font-size:.78rem">
+                        @Initials(_selectedUserName)
+                    </div>
+                    <div>
+                        <div style="font-weight:600;font-size:.9rem">@_selectedUserName</div>
+                        <div style="font-size:.72rem;color:var(--nice-muted)">● Online</div>
+                    </div>
+                    <button class="nc-btn nc-btn-ghost nc-btn-sm" style="margin-left:auto"
+                            @onclick="LeaveChat">End</button>
+                </div>
+
+                <!-- Messages -->
+                <div class="ic-messages" id="ic-msg-scroll">
+                    @if (_messages.Count == 0)
+                    {
+                        <div style="text-align:center;color:var(--nice-muted);font-size:.82rem;margin-top:32px">
+                            Say hello to @_selectedUserName
+                        </div>
+                    }
+                    @foreach (var m in _messages)
+                    {
+                        var isOwn = m.SenderId == _myUserId;
+                        <div class="ic-msg-row @(isOwn ? "ic-msg-row--own" : "")">
+                            @if (!isOwn)
+                            {
+                                <div class="ic-user-av" style="background:#06b6d4;width:26px;height:26px;font-size:.65rem;flex-shrink:0">
+                                    @Initials(m.SenderName)
+                                </div>
+                            }
+                            <div class="ic-bubble @(isOwn ? "ic-bubble--own" : "ic-bubble--other")">
+                                <div>@m.Content</div>
+                                <div class="ic-msg-time">@m.SentAt.ToLocalTime().ToString("HH:mm")</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Input -->
+                <div class="ic-input-row">
+                    <input class="ic-input" type="text"
+                           placeholder="Type a message…"
+                           @bind="_inputText"
+                           @bind:event="oninput"
+                           @onkeydown="OnInputKeyDown"
+                           @ref="_inputRef" />
+                    <button class="nc-btn nc-btn-primary" style="padding:8px 16px"
+                            disabled="@(string.IsNullOrWhiteSpace(_inputText) || _sending)"
+                            @onclick="SendMessage">Send</button>
+                </div>
+
+            </div>
+        }
+    </div>
+
+</div><!-- end ic-shell -->
+</div><!-- end nc-page -->
+
+@code {
+    // ── State ──────────────────────────────────────────────────────────────
+    List<OnlineUserInfo> _users        = [];
+    bool                 _loadingUsers = true;
+    string               _myUserId = string.Empty;
+
+    // Selected user / active chat
+    string _selectedUserId   = string.Empty;
+    string _selectedUserName = "";
+    string _selectedUserType = "";
+    bool   _joined           = false;
+    string _collabId         = "";
+
+    // Messages
+    List<ChatMessage> _messages  = [];
+    string            _inputText = "";
+    bool              _sending   = false;
+    ElementReference  _inputRef;
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        // Guard — no session or hub connect until auth succeeds.
+        if (!Auth.Current.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        _myUserId = Auth.Current.UserId;
+
+        // Subscribe to hub events
+        Hub.OnOnlineUsersUpdated     += OnOnlineUsersUpdated;
+        Hub.OnMessageReceived        += OnMessageReceived;
+        Hub.OnCollaborationCreated   += OnCollaborationCreated;
+        Hub.OnCollaborationEnded     += OnCollaborationEnded;
+        Hub.OnConnectionChanged      += OnConnectionChanged;
+
+        // Connect hub if not already connected
+        if (Hub.ConnectionState != HubConnectionState.Connected)
+        {
+            try { await Hub.ConnectAsync(); }
+            catch (Exception ex) { Console.WriteLine($"Hub connect failed: {ex.Message}"); }
+        }
+
+        // Load initial online users list
+        await LoadUsersAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.OnOnlineUsersUpdated     -= OnOnlineUsersUpdated;
+        Hub.OnMessageReceived        -= OnMessageReceived;
+        Hub.OnCollaborationCreated   -= OnCollaborationCreated;
+        Hub.OnCollaborationEnded     -= OnCollaborationEnded;
+        Hub.OnConnectionChanged      -= OnConnectionChanged;
+
+        if (_joined && !string.IsNullOrEmpty(_collabId))
+        {
+            try { await Hub.LeaveCollaborationAsync(_collabId); } catch { }
+        }
+    }
+
+    async Task LoadUsersAsync()
+    {
+        _loadingUsers = true;
+        StateHasChanged();
+        var appId = Guid.TryParse(Auth.Current.ApplicationId, out var appGuid) ? appGuid : Guid.Empty;
+        var raw   = await Demo.GetOnlineUsersAsync(appId);
+
+        // Exclude self; include ALL non-External staff (Internal, Agent, Supervisor).
+        // Sort alphabetically by display name.
+        _users = raw
+            .Where(u => u.UserId.ToString() != _myUserId)
+            .OrderBy(u => u.DisplayName)
+            .ToList();
+
+        _loadingUsers = false;
+        StateHasChanged();
+    }
+
+    // ── Hub event handlers ─────────────────────────────────────────────────
+    async Task OnOnlineUsersUpdated(List<OnlineUserInfo> users)
+    {
+        // Same rule as LoadUsersAsync: exclude self, sort by name.
+        _users = users
+            .Where(u => u.UserId.ToString() != _myUserId)
+            .OrderBy(u => u.DisplayName)
+            .ToList();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    Task OnMessageReceived(ChatMessage msg)
+    {
+        if (!_joined) return Task.CompletedTask;
+        if (msg.CollaborationId != _collabId && _collabId != "") return Task.CompletedTask;
+        // Don't echo own messages (they're added optimistically)
+        if (msg.SenderId == _myUserId) return Task.CompletedTask;
+        _messages.Add(msg);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    async Task OnCollaborationCreated(string collabId, string status)
+    {
+        _collabId = collabId;
+        _joined   = true;
+        try { await Hub.JoinCollaborationAsync(collabId); } catch { }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    Task OnCollaborationEnded(string collabId)
+    {
+        if (collabId != _collabId) return Task.CompletedTask;
+        _joined   = false;
+        _collabId = "";
+        _messages.Clear();
+        return InvokeAsync(StateHasChanged);
+    }
+
+    void OnConnectionChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    // ── UI actions ─────────────────────────────────────────────────────────
+    void SelectUser(OnlineUserInfo user)
+    {
+        if (user.UserId.ToString() == _myUserId) return;   // can't chat with yourself
+        if (_joined) return;                     // already in a chat
+
+        _selectedUserId   = user.UserId.ToString();
+        _selectedUserName = user.DisplayName;
+        _selectedUserType = user.UserType;
+        StateHasChanged();
+
+        // Kick off the collaboration request asynchronously
+        _ = StartChatAsync();
+    }
+
+    async Task StartChatAsync()
+    {
+        try
+        {
+            await Hub.RequestCollaborationAsync(_selectedUserId.ToString());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"StartChat error: {ex.Message}");
+        }
+    }
+
+    async Task LeaveChat()
+    {
+        if (!string.IsNullOrEmpty(_collabId))
+        {
+            try { await Hub.EndCollaborationAsync(_collabId); } catch { }
+            try { await Hub.LeaveCollaborationAsync(_collabId); } catch { }
+        }
+        _joined           = false;
+        _collabId         = "";
+        _selectedUserId   = "";
+        _selectedUserName = "";
+        _selectedUserType = "";
+        _messages.Clear();
+        StateHasChanged();
+    }
+
+    async Task SendMessage()
+    {
+        var text = _inputText.Trim();
+        if (string.IsNullOrWhiteSpace(text) || _sending) return;
+
+        _inputText = "";
+        _sending   = true;
+
+        // Optimistic local add
+        _messages.Add(new ChatMessage
+        {
+            Id         = Guid.NewGuid(),
+            CollaborationId = _collabId,
+            SenderId   = _myUserId,
+            SenderName = Auth.Current.DisplayName,
+            SenderRole = Auth.Current.UserType,
+            Content    = text,
+            SentAt     = DateTime.UtcNow
+        });
+
+        try
+        {
+            if (!string.IsNullOrEmpty(_collabId))
+                await Hub.SendMessageAsync(_collabId, text);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SendMessage error: {ex.Message}");
+        }
+        finally
+        {
+            _sending = false;
+        }
+
+        try { await _inputRef.FocusAsync(); } catch { }
+        StateHasChanged();
+    }
+
+    async Task OnInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendMessage();
+    }
+
+    async Task SignOut()
+    {
+        if (_joined && !string.IsNullOrEmpty(_collabId))
+        {
+            try { await Hub.EndCollaborationAsync(_collabId); } catch { }
+        }
+        try { await Hub.DisconnectAsync(); } catch { }
+        Nav.NavigateTo("/login");
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length >= 2 ? name[..2].ToUpper()
+            : name.ToUpper();
+    }
+
+}

@@ -1,11 +1,3 @@
-namespace NICE.Platform.Collaboration.Application.Features.Collaborations.Commands.AcceptCollaboration;
-using MediatR;
-public class AcceptCollaborationCommandHandler : IRequestHandler<AcceptCollaborationCommand, Unit>
-{
-    // TODO: inject ICollaborationRepository, ISignalRNotifier, etc. via constructor
-    public Task<Unit> Handle(AcceptCollaborationCommand request, CancellationToken cancellationToken)
-    {
-        // TODO: set status Active, notify user group
-        throw new NotImplementedException();
-    }
-}
+// Handler moved to NICE.Platform.Collaboration.Infrastructure (same relative path).
+// Application layer cannot reference Infrastructure — handlers that use CollaborationDbContext
+// live in Infrastructure. MediatR scans both assemblies via AddInfrastructureServices().

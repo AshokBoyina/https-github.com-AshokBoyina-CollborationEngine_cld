@@ -1,3 +1,6 @@
 namespace NICE.Platform.Collaboration.Application.Features.Collaborations.Commands.AcceptCollaboration;
 using MediatR;
-public record AcceptCollaborationCommand(Guid CollaborationId, Guid AgentId) : IRequest<Unit>;
+public record AcceptCollaborationCommand(
+    Guid CollaborationId,
+    Guid AgentId)
+    : IRequest<NICE.Platform.Collaboration.Contracts.Responses.CollaborationResponse>;

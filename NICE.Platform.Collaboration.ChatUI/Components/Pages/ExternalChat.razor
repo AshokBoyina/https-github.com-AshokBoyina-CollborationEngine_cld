@@ -1,0 +1,653 @@
+@page "/chat/external"
+@inject IAuthService Auth
+@inject ICollaborationHubService Hub
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="cw-container">
+
+    @if (!_panelOpen)
+    {
+        <div class="cw-pill" @onclick="OpenPanel">
+            <div class="cw-pill-av">AN</div>
+            <div class="cw-pill-text">
+                <span class="name">Ask Nass</span>
+                <span class="sub">Always here to help</span>
+            </div>
+            @if (_unread > 0)
+            {
+                <span style="background:var(--nice-error);color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 6px;min-width:18px;text-align:center">@_unread</span>
+            }
+            <span class="cw-pill-dot"></span>
+        </div>
+    }
+    else
+    {
+        <div class="cw-panel">
+
+            <!-- Header -->
+            <div class="cw-header">
+                <div class="cw-header-left">
+                    <div class="cw-hdr-av">@(_agentState == AgentState.Connected ? Initials(_agentName) : "AN")</div>
+                    <div>
+                        <div class="cw-hdr-name">@(_agentState == AgentState.Connected ? _agentName : "Ask Nass")</div>
+                        <div class="cw-hdr-status">
+                            <span class="cw-hdr-online"></span>
+                            @(_agentState == AgentState.Connected ? $"Live with {_agentFirstName}" : "Always here to help")
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                    @if (_agentState == AgentState.Connected)
+                    {
+                        <button class="cw-hdr-btn" title="@(_screenShareActive ? "Stop sharing" : "Share screen")"
+                                @onclick="ToggleScreenShare">
+                            @if (_screenShareActive)
+                            {
+                                <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                                    <rect x="2" y="4" width="16" height="11" rx="2" stroke="white" stroke-width="1.5"/>
+                                    <line x1="6" y1="9" x2="14" y2="9" stroke="#ff6b6b" stroke-width="2" stroke-linecap="round"/>
+                                </svg>
+                            }
+                            else
+                            {
+                                <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                                    <rect x="2" y="4" width="16" height="11" rx="2" stroke="white" stroke-width="1.5"/>
+                                    <path d="M7 9l3-3 3 3M10 6v6" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            }
+                        </button>
+                        <button class="cw-hdr-btn"
+                                style="background:rgba(239,68,68,.85);font-size:.65rem;font-weight:600;padding:3px 8px;letter-spacing:.02em"
+                                title="End chat"
+                                @onclick="EndChat">
+                            End Chat
+                        </button>
+                    }
+                    <button class="cw-hdr-btn" title="Minimise" @onclick="ClosePanel">
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                            <path d="M2 2l12 12M14 2L2 14" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── Status banner (pinned at top of chat panel) ───────── -->
+            @if (_agentState != AgentState.None)
+            {
+                <div style="flex-shrink:0;background:@AgentStateBg();border-bottom:1px solid var(--nice-border-soft);padding:8px 14px;font-size:.8rem;display:flex;align-items:center;justify-content:space-between;gap:8px">
+                    <div style="display:flex;align-items:center;gap:8px;flex:1">
+                        @switch (_agentState)
+                        {
+                            case AgentState.Idle:
+                                <span style="font-size:1rem">🙋</span>
+                                <span style="font-weight:600;color:#1e40af">Need a live agent?</span>
+                                break;
+
+                            case AgentState.Searching:
+                                <span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block;animation:nc-pulse 1.4s infinite;flex-shrink:0"></span>
+                                <span style="font-weight:600;color:#92400e">Finding agent… please wait</span>
+                                break;
+
+                            case AgentState.Found:
+                                <span style="font-size:.9rem">🔗</span>
+                                <span style="font-weight:600;color:#1d4ed8">@_agentName is joining…</span>
+                                break;
+
+                            case AgentState.Connected:
+                                <span class="sdot sdot--on"></span>
+                                <span style="font-weight:600;color:#166534">Live with @_agentFirstName</span>
+                                break;
+                        }
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0">
+                        @if (_agentState == AgentState.Idle)
+                        {
+                            <button class="btn btn--primary" style="padding:4px 12px;font-size:.78rem" @onclick="RequestAgent">Connect</button>
+                        }
+                        else if (_agentState == AgentState.Searching)
+                        {
+                            <button class="btn" style="padding:4px 10px;font-size:.78rem" @onclick="CancelRequest">Cancel</button>
+                        }
+                    </div>
+                </div>
+            }
+
+            <!-- Messages -->
+            <div class="cw-messages" id="cw-msgs">
+
+                @if (_messages.Count == 0)
+                {
+                    <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:28px 12px;gap:8px">
+                        <div style="font-size:2.4rem">👋</div>
+                        <div style="font-weight:700;color:var(--nice-primary-strong)">Hi, @_firstName! I'm Nass.</div>
+                        <div style="font-size:.82rem;color:var(--nice-text-muted);line-height:1.55">How can I help you today?</div>
+                        <div class="cw-chips">
+                            <span class="cw-chip" @onclick='() => QuickSend("I need help with my account")'>Account help</span>
+                            <span class="cw-chip" @onclick='() => QuickSend("Talk to an agent")'>Talk to an agent</span>
+                            <span class="cw-chip" @onclick='() => QuickSend("Technical support")'>Tech support</span>
+                        </div>
+                    </div>
+                }
+
+                @foreach (var m in _messages)
+                {
+                    @if (m.IsMine)
+                    {
+                        <!-- User's own message — right-aligned blue bubble -->
+                        <div class="cw-msg-user">
+                            <div style="font-size:.68rem;opacity:.75;margin-bottom:2px;text-align:right">@m.SenderName</div>
+                            @m.Content
+                        </div>
+                    }
+                    else if (m.IsBot)
+                    {
+                        <!-- NASS bot message — left grey bubble with label -->
+                        <div class="cw-msg-bot">
+                            <div style="font-size:.68rem;color:var(--nice-text-muted);margin-bottom:2px">@m.SenderName</div>
+                            @m.Content
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- Live agent / supervisor message — name label above bubble -->
+                        var displayName = !string.IsNullOrEmpty(m.SenderName)
+                            ? m.SenderName
+                            : (!string.IsNullOrEmpty(_agentName) ? _agentName : "Agent");
+                        // Also persist agent name if we haven't captured it yet
+                        if (!string.IsNullOrEmpty(m.SenderName) && string.IsNullOrEmpty(_agentName))
+                            _agentName = m.SenderName;
+                        var isSupMsg = m.SenderRole == "Supervisor";
+                        <div style="display:flex;flex-direction:column;align-items:flex-start">
+                            <div style="font-size:.68rem;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:4px;color:@(isSupMsg ? "#6d28d9" : "var(--nice-text-muted)")">
+                                @displayName
+                                @if (isSupMsg)
+                                {
+                                    <span style="background:#6d28d9;color:#fff;border-radius:4px;padding:0 4px;font-size:.58rem;font-weight:700;letter-spacing:.04em">SUPERVISOR</span>
+                                }
+                            </div>
+                            <div class="cw-msg-agent" style="@(isSupMsg ? "background:#ede9fe;border-color:#a78bfa;color:#4c1d95" : "")">
+                                @m.Content
+                            </div>
+                        </div>
+                    }
+                }
+
+                @if (_botTyping)
+                {
+                    <div class="cw-typing"><span></span><span></span><span></span></div>
+                }
+            </div>
+
+            <!-- Input bar -->
+            <div class="cw-input-bar">
+                <textarea class="cw-input" placeholder="Type a message…"
+                          rows="1"
+                          @ref="_inputRef"
+                          @bind="_inputText"
+                          @bind:event="oninput"
+                          @onkeydown="OnKeyDown"
+                          disabled="@_sending"></textarea>
+                <button class="cw-send" @onclick="SendMessage"
+                        disabled="@(string.IsNullOrWhiteSpace(_inputText) || _sending)">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                        <path d="M2 10l16-8-8 16V11L2 10z" fill="white"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="cw-footer">Powered by USDA Nass</div>
+        </div>
+    }
+</div>
+
+<style>
+    @@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+@code {
+    // ── State ──────────────────────────────────────────────────────────────
+    bool   _panelOpen = false;
+    bool   _sending   = false;
+    bool   _botTyping = false;
+    int    _unread    = 0;
+    string _inputText = "";
+    string _agentName  = "";
+    string _collabId   = "";
+    string _firstName  = "";
+
+    enum AgentState { None, Idle, Searching, Found, Connected }
+    AgentState _agentState = AgentState.None;   // None until user types "talk to agent"
+
+    List<ChatMessage> _messages = new();
+
+    bool _screenShareActive = false;
+    bool _answerSubscribed  = false;
+    bool _needsReshare      = false;   // true when share was live during a transfer
+    DotNetObjectReference<ExternalChat>? _screenShareRef;
+    ElementReference _inputRef;
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.Current.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        _firstName = Auth.Current.DisplayName.Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(_firstName)) _firstName = "there";
+
+        // Wire hub events
+        Hub.OnCollaborationCreated  += OnCollaborationCreated;
+        Hub.OnCollaborationAccepted += OnCollaborationAccepted;
+        Hub.OnCollaborationEnded    += OnCollaborationEnded;
+        Hub.OnMessageReceived       += OnMessageReceived;
+        Hub.OnConnectionChanged        += OnConnectionChanged;
+        Hub.OnScreenOfferRequested     += OnScreenOfferRequested;
+        Hub.OnForceDisconnected        += OnForceDisconnected;
+        Hub.OnCollaborationTransferred += OnCollaborationTransferredHandler;
+
+        if (Hub.ConnectionState != HubConnectionState.Connected)
+        {
+            try { await Hub.ConnectAsync(); }
+            catch (Exception ex) { Console.WriteLine($"Hub connect failed: {ex.Message}"); }
+        }
+
+        // Greet after a short delay
+        await Task.Delay(600);
+        AddBotMessage("Hi! I'm Nass, your AI assistant. How can I help you today?");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.OnCollaborationCreated  -= OnCollaborationCreated;
+        Hub.OnCollaborationAccepted -= OnCollaborationAccepted;
+        Hub.OnCollaborationEnded    -= OnCollaborationEnded;
+        Hub.OnMessageReceived       -= OnMessageReceived;
+        Hub.OnConnectionChanged        -= OnConnectionChanged;
+        Hub.OnScreenOfferRequested     -= OnScreenOfferRequested;
+        Hub.OnForceDisconnected        -= OnForceDisconnected;
+        Hub.OnCollaborationTransferred -= OnCollaborationTransferredHandler;
+        Hub.OnAnswer                   -= OnScreenShareAnswer;   // safe if not subscribed
+
+        if (_screenShareActive)
+        {
+            try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+            _screenShareActive = false;
+        }
+        _screenShareRef?.Dispose();
+        _screenShareRef = null;
+    }
+
+    void OnConnectionChanged()
+    {
+        InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            // After a reconnect, rejoin the collab group so we keep receiving messages
+            if (Hub.ConnectionState == HubConnectionState.Connected
+                && !string.IsNullOrEmpty(_collabId)
+                && _agentState is AgentState.Searching or AgentState.Found or AgentState.Connected)
+            {
+                try { await Hub.JoinCollaborationAsync(_collabId); } catch { }
+            }
+        });
+    }
+
+    // ── Panel ──────────────────────────────────────────────────────────────
+    void OpenPanel()  { _panelOpen = true; _unread = 0; _ = ScrollToBottom(); }
+    void ClosePanel() { _panelOpen = false; }
+
+    // ── Bot responses ──────────────────────────────────────────────────────
+    static readonly Dictionary<string[], string> BotReplies = new()
+    {
+        { new[]{"hello","hi","hey"},              "Hello! Happy to help. What's your question?" },
+        { new[]{"account","login","password"},    "For account issues, I can reset your password or unlock your account. Which do you need?" },
+        { new[]{"payment","billing","invoice"},   "I can pull up your billing history or help with a payment dispute. What's the issue?" },
+        { new[]{"survey","form","submit"},        "Surveys can be saved and resumed. Make sure cookies are enabled in your browser." },
+        { new[]{"error","broken","not working"},  "Sorry to hear that! Can you describe what you see — any error message?" },
+        { new[]{"thanks","thank you","great"},    "You're welcome! Is there anything else I can help with?" },
+    };
+
+    string GetBotReply(string text)
+    {
+        var lower = text.ToLowerInvariant();
+        foreach (var (keys, reply) in BotReplies)
+            if (keys.Any(k => lower.Contains(k)))
+                return reply;
+        return "I understand. Let me check on that. If you'd like faster help, I can connect you with a live agent.";
+    }
+
+    bool WantsAgent(string text)
+    {
+        var l = text.ToLowerInvariant();
+        return l.Contains("agent") || l.Contains("human") || l.Contains("person") ||
+               l.Contains("talk to") || l.Contains("speak to") || l.Contains("live chat");
+    }
+
+    // ── Messaging ──────────────────────────────────────────────────────────
+    async Task QuickSend(string text) { _inputText = text; await SendMessage(); }
+
+    async Task SendMessage()
+    {
+        var text = _inputText.Trim();
+        if (string.IsNullOrEmpty(text) || _sending) return;
+
+        _inputText = "";
+        _sending   = true;
+
+        // Add user message
+        _messages.Add(new ChatMessage
+        {
+            SenderId   = Auth.Current.UserId,
+            SenderName = Auth.Current.DisplayName,
+            Content    = text,
+            IsMine     = true,
+            SentAt     = DateTime.UtcNow
+        });
+        StateHasChanged();
+        await ScrollToBottom();
+
+        if (_agentState == AgentState.Connected && !string.IsNullOrEmpty(_collabId))
+        {
+            // Live session — send to hub
+            try { await Hub.SendMessageAsync(_collabId, text); }
+            catch (Exception ex) { AddBotMessage($"⚠ Message not delivered: {ex.Message}"); }
+        }
+        else
+        {
+            // Bot phase
+            if (WantsAgent(text))
+            {
+                // Show the agent request banner at the top
+                _agentState = AgentState.Idle;
+                AddBotMessage("I'll connect you with a live agent. Click Connect in the banner above when ready.");
+            }
+            else
+            {
+                _botTyping = true;
+                StateHasChanged();
+                await Task.Delay(900);
+                _botTyping = false;
+                AddBotMessage(GetBotReply(text));
+            }
+        }
+
+        _sending = false;
+        StateHasChanged();
+        await ScrollToBottom();
+        // Return focus to the input box so the user can type the next message immediately
+        try { await _inputRef.FocusAsync(); } catch { }
+    }
+
+    async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendMessage();
+    }
+
+    void AddBotMessage(string text)
+    {
+        _messages.Add(new ChatMessage
+        {
+            SenderId   = "nass-bot",
+            SenderName = "Nass",
+            Content    = text,
+            IsBot      = true,
+            SentAt     = DateTime.UtcNow
+        });
+        if (!_panelOpen) _unread++;
+        StateHasChanged();
+    }
+
+    // ── Agent request flow ─────────────────────────────────────────────────
+    async Task RequestAgent()
+    {
+        _agentState = AgentState.Searching;
+        StateHasChanged();
+
+        try
+        {
+            await Hub.RequestCollaborationAsync();
+            // OnCollaborationCreated will fire → _collabId stored, state stays Searching
+        }
+        catch (Exception ex)
+        {
+            _agentState = AgentState.Idle;
+            AddBotMessage($"⚠ Could not request an agent: {ex.Message}");
+        }
+    }
+
+    void CancelRequest()
+    {
+        _agentState = AgentState.Idle;
+        _collabId   = "";
+        StateHasChanged();
+    }
+
+    async Task EndChat()
+    {
+        if (string.IsNullOrEmpty(_collabId)) return;
+
+        // Stop screen share if active
+        if (_screenShareActive)
+        {
+            try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+            _screenShareActive = false;
+            _screenShareRef?.Dispose();
+            _screenShareRef = null;
+        }
+
+        try { await Hub.EndCollaborationAsync(_collabId); }
+        catch (Exception ex) { Console.WriteLine($"EndChat error: {ex.Message}"); }
+
+        _agentState = AgentState.None;
+        _collabId   = "";
+        _agentName  = "";
+        AddBotMessage("You've ended the chat session. Feel free to start a new conversation anytime.");
+        StateHasChanged();
+    }
+
+    // ── Hub event handlers ─────────────────────────────────────────────────
+    async Task OnCollaborationCreated(string collabId, string status)
+    {
+        await InvokeAsync(() =>
+        {
+            _collabId   = collabId;
+            _agentState = AgentState.Searching;   // waiting for agent to accept
+            StateHasChanged();
+        });
+    }
+
+    async Task OnCollaborationAccepted(string collabId, string agentId, string agentName)
+    {
+        await InvokeAsync(async () =>
+        {
+            if (collabId != _collabId) return;
+            _agentName  = agentName;
+            _agentState = AgentState.Found;
+            StateHasChanged();
+            await Task.Delay(1500);
+            _agentState = AgentState.Connected;
+
+            // If the session was transferred and the screen share was stopped, prompt reshare
+            if (_needsReshare)
+            {
+                _needsReshare = false;
+                AddBotMessage($"✅ {agentName} has joined the chat. " +
+                    "Please click the 📺 screen-share button to continue sharing your screen with the new agent.");
+            }
+            else
+            {
+                AddBotMessage($"✅ {agentName} has joined the chat. You can now chat directly.");
+            }
+            await ScrollToBottom();
+        });
+    }
+
+    async Task OnCollaborationEnded(string collabId)
+    {
+        await InvokeAsync(() =>
+        {
+            if (collabId != _collabId) return;
+            _agentState = AgentState.Idle;
+            _collabId   = "";
+            _agentName  = "";
+            _screenShareActive = false;
+            AddBotMessage("The agent has ended the session. Is there anything else I can help with?");
+            StateHasChanged();
+        });
+    }
+
+    async Task OnMessageReceived(ChatMessage msg)
+    {
+        if (msg.SenderId == Auth.Current.UserId.ToString()) return;
+        await InvokeAsync(() =>
+        {
+            _messages.Add(msg);
+            if (!_panelOpen) _unread++;
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
+    }
+
+    async Task OnScreenOfferRequested(string collabId)
+    {
+        Console.WriteLine($"[ExternalChat] ScreenOfferRequested: collabId={collabId}, _collabId={_collabId}, _screenShareActive={_screenShareActive}");
+        if (collabId != _collabId || !_screenShareActive) return;
+        try
+        {
+            var sdp = await JS.InvokeAsync<string>("screenShare.reOffer");
+            Console.WriteLine($"[ExternalChat] reOffer returned SDP length={sdp?.Length ?? 0}");
+            if (!string.IsNullOrEmpty(sdp))
+                await Hub.ShareScreenOfferAsync(_collabId, sdp);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ExternalChat] OnScreenOfferRequested error: {ex.Message}");
+        }
+    }
+
+    async Task OnScreenShareAnswer(string collabId, string sdp)
+    {
+        // External users are always in a single collaboration; collabId is informational only.
+        // The JS setAnswer applies the SDP to the most-recently created share PeerConnection.
+        try { await JS.InvokeVoidAsync("screenShare.setAnswer", sdp); }
+        catch { }
+    }
+
+    void OnForceDisconnected(string reason)
+    {
+        InvokeAsync(() =>
+        {
+            _agentState = AgentState.None;
+            _collabId   = "";
+            AddBotMessage($"You have been signed out: {reason}");
+            StateHasChanged();
+        });
+    }
+
+    async Task OnCollaborationTransferredHandler(string collabId, string fromAgent, string toAgentId)
+    {
+        await InvokeAsync(() =>
+        {
+            if (collabId != _collabId) return;
+            _agentName  = "Connecting…";
+            _agentState = AgentState.Searching;
+            if (_screenShareActive) _needsReshare = true;
+            AddBotMessage("Your chat is being transferred to another agent. Please hold on…");
+            StateHasChanged();
+        });
+    }
+
+    // ── Screen share ─────────────────────────────────────────────────────────
+    async Task ToggleScreenShare()
+    {
+        if (_screenShareActive)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("screenShare.stop");
+                if (!string.IsNullOrEmpty(_collabId))
+                    await Hub.StopScreenShareAsync(_collabId);
+            }
+            catch { }
+            _screenShareActive = false;
+        }
+        else
+        {
+            await StartScreenShare();
+        }
+        StateHasChanged();
+    }
+
+    async Task StartScreenShare()
+    {
+        if (string.IsNullOrEmpty(_collabId)) return;
+        try
+        {
+            _screenShareRef ??= DotNetObjectReference.Create(this);
+            if (!_answerSubscribed)
+            {
+                Hub.OnAnswer += OnScreenShareAnswer;
+                _answerSubscribed = true;
+            }
+            var sdp = await JS.InvokeAsync<string>("screenShare.getOffer", _screenShareRef);
+            if (!string.IsNullOrEmpty(sdp))
+            {
+                await Hub.ShareScreenOfferAsync(_collabId, sdp);
+                _screenShareActive = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Screen share error: {ex.Message}");
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public Task OnScreenShareStopped()
+    {
+        _screenShareActive = false;
+        if (!string.IsNullOrEmpty(_collabId))
+            _ = Hub.StopScreenShareAsync(_collabId);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    // ── Computed helpers ────────────────────────────────────────────────────────
+    string _agentFirstName => string.IsNullOrEmpty(_agentName)
+        ? "Agent"
+        : _agentName.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+
+    static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length > 0 ? name[..Math.Min(2, name.Length)].ToUpper() : "AN";
+    }
+
+    string AgentStateBg() => _agentState switch
+    {
+        AgentState.Idle      => "#eff6ff",
+        AgentState.Searching => "#fffbeb",
+        AgentState.Found     => "#eff6ff",
+        AgentState.Connected => "#f0fdf4",
+        _                    => "transparent"
+    };
+
+    // ── Utilities ───────────────────────────────────────────────────────────────
+    async Task ScrollToBottom()
+    {
+        try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "cw-msgs"); } catch { }
+    }
+
+    async Task OnInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendMessage();
+    }
+}

@@ -1,11 +1,3 @@
-namespace NICE.Platform.Collaboration.Application.Features.Collaborations.Commands.InviteSupervisor;
-using MediatR;
-public class InviteSupervisorCommandHandler : IRequestHandler<InviteSupervisorCommand, Unit>
-{
-    // TODO: inject ICollaborationRepository, ISignalRNotifier, etc. via constructor
-    public Task<Unit> Handle(InviteSupervisorCommand request, CancellationToken cancellationToken)
-    {
-        // TODO: validate supervisor belongs to same application, send SignalR notification to supervisor
-        throw new NotImplementedException();
-    }
-}
+// Handler moved to NICE.Platform.Collaboration.Infrastructure (same relative path).
+// Application layer cannot reference Infrastructure — handlers that use CollaborationDbContext
+// live in Infrastructure. MediatR scans both assemblies via AddInfrastructureServices().

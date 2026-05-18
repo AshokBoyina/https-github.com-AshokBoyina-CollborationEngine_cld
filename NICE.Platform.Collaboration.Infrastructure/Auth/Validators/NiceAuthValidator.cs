@@ -1,6 +1,7 @@
 namespace NICE.Platform.Collaboration.Infrastructure.Auth.Validators;
 
-using System.Net.Http.Json;
+using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -8,30 +9,14 @@ using NICE.Platform.Collaboration.Application.Auth;
 using NICE.Platform.Collaboration.Application.Interfaces.Auth;
 using NICE.Platform.Collaboration.Infrastructure.Auth.Settings;
 
-/// <summary>
-/// Validates a token by making an HTTP POST to the NICE validate endpoint.
-///
-/// When <see cref="AuthValidationSettings.UseMock"/> is <c>true</c> the real
-/// HTTP call is skipped and the configured mock response is returned immediately.
-///
-/// Expected NICE response shape:
-/// <code>
-/// {
-///   "success":   true,
-///   "userId":    "...",
-///   "email":     "...",
-///   "firstName": "...",
-///   "lastName":  "..."
-/// }
-/// </code>
-/// </summary>
 public sealed class NiceAuthValidator : IAuthValidator
 {
     private readonly HttpClient _http;
     private readonly AuthValidationSettings _settings;
     private readonly ILogger<NiceAuthValidator> _logger;
 
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonOpts =
+        new() { PropertyNameCaseInsensitive = true };
 
     public NiceAuthValidator(
         HttpClient http,
@@ -43,69 +28,143 @@ public sealed class NiceAuthValidator : IAuthValidator
         _logger   = logger;
     }
 
-    public async Task<AuthValidatorResult> ValidateAsync(string authToken, CancellationToken ct = default)
+    public async Task<AuthValidatorResult> ValidateAsync(
+        string authToken, CancellationToken ct = default)
     {
-        // ── MOCK MODE ─────────────────────────────────────────────────────────
         if (_settings.UseMock)
         {
-            _logger.LogWarning("[MOCK] NICE validation bypassed — returning mock response.");
+            _logger.LogWarning("[MOCK] NICE validation bypassed — token-aware mock.");
             var mock = _settings.Mock.Nice;
-            return mock.IsValid
-                ? AuthValidatorResult.Ok(mock.UserId, mock.Email, mock.FirstName, mock.LastName)
-                : AuthValidatorResult.Fail(mock.Error ?? "Mock NICE validation failed.");
+            if (!mock.IsValid)
+                return AuthValidatorResult.Fail(mock.Error ?? "Mock NICE validation failed.");
+
+            var userId        = string.IsNullOrWhiteSpace(authToken) ? mock.UserId : authToken;
+            var (first, last) = AnonymousAuthValidator.ParseDemoName(authToken, mock.FirstName, mock.LastName);
+            return AuthValidatorResult.Ok(userId, mock.Email, first, last);
         }
 
-        // ── REAL NICE CALL ────────────────────────────────────────────────────
         var url = _settings.Endpoints.NiceValidateUrl;
         if (string.IsNullOrWhiteSpace(url))
         {
-            _logger.LogError("NICE validate URL is not configured (AuthValidation:Endpoints:NiceValidateUrl).");
+            _logger.LogError("NICE validate URL not configured.");
             return AuthValidatorResult.Fail("NICE provider is not configured.");
         }
 
         try
         {
-            var requestBody = new { token = authToken };
-            using var response = await _http.PostAsJsonAsync(url, requestBody, ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrWhiteSpace(authToken))
+            {
+                request.Headers.Authorization =
+                    new AuthenticationHeaderValue("Bearer", authToken);
+                request.Headers.TryAddWithoutValidation("Cookie", $"AuthToken={authToken}");
+            }
+
+            using var response = await _http.SendAsync(request, ct);
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("NICE validate endpoint returned HTTP {Status}.", (int)response.StatusCode);
-                return AuthValidatorResult.Fail($"NICE validation rejected (HTTP {(int)response.StatusCode}).");
+                _logger.LogWarning("NICE returned HTTP {Status}.", (int)response.StatusCode);
+                return AuthValidatorResult.Fail(
+                    $"NICE validation rejected (HTTP {(int)response.StatusCode}).");
             }
 
-            var body = await response.Content.ReadFromJsonAsync<NiceValidateResponse>(JsonOpts, ct);
-
-            if (body is null || !body.Success)
+            // 1) Prefer JWT in response header X-Nice-Token
+            if (response.Headers.TryGetValues("X-Nice-Token", out var headerValues))
             {
-                _logger.LogWarning("NICE validate returned success=false. Error: {Error}", body?.Error);
-                return AuthValidatorResult.Fail(body?.Error ?? "NICE validation failed.");
+                var raw = headerValues.FirstOrDefault()?.Trim();
+                if (!string.IsNullOrEmpty(raw))
+                {
+                    if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                        raw = raw["Bearer ".Length..].Trim();
+
+                    var userId     = GetClaimFromJwtPayload(raw, "sub")
+                                     ?? TryReadJwtClaim(raw, j => j.Subject);
+                    var givenName  = GetClaimFromJwtPayload(raw, "given_name")
+                                     ?? TryReadJwtClaim(raw, j =>
+                                         j.Claims.FirstOrDefault(c => c.Type == "given_name")?.Value);
+                    var familyName = GetClaimFromJwtPayload(raw, "family_name")
+                                     ?? TryReadJwtClaim(raw, j =>
+                                         j.Claims.FirstOrDefault(c => c.Type == "family_name")?.Value);
+                    var email      = GetClaimFromJwtPayload(raw, "email")
+                                     ?? TryReadJwtClaim(raw, j =>
+                                         j.Claims.FirstOrDefault(c => c.Type == "email")?.Value);
+
+                    if (!string.IsNullOrEmpty(userId))
+                        return AuthValidatorResult.Ok(userId, email, givenName, familyName);
+                }
             }
 
-            _logger.LogInformation("NICE validation succeeded for user {UserId}.", body.UserId);
-            return AuthValidatorResult.Ok(body.UserId!, body.Email, body.FirstName, body.LastName);
+            // 2) Fall back to JSON body
+            var jsonString = await response.Content.ReadAsStringAsync(ct);
+            var body = JsonSerializer.Deserialize<JsonElement>(jsonString, JsonOpts);
+
+            var subFromBody = TryGetJsonString(body, "sub")
+                              ?? TryGetJsonString(body, "userId")
+                              ?? TryGetJsonString(body, "id");
+
+            if (string.IsNullOrEmpty(subFromBody))
+            {
+                _logger.LogWarning("NICE response contained no usable sub/userId.");
+                return AuthValidatorResult.Fail("NICE response missing user identifier.");
+            }
+
+            return AuthValidatorResult.Ok(
+                subFromBody,
+                TryGetJsonString(body, "email"),
+                TryGetJsonString(body, "given_name") ?? TryGetJsonString(body, "firstName"),
+                TryGetJsonString(body, "family_name") ?? TryGetJsonString(body, "lastName"));
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "HTTP error calling NICE validate endpoint at {Url}.", url);
-            return AuthValidatorResult.Fail("NICE validate endpoint is unreachable.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Unexpected error during NICE validation.");
-            return AuthValidatorResult.Fail("NICE validation encountered an unexpected error.");
+            _logger.LogError(ex, "NICE validation threw an exception.");
+            return AuthValidatorResult.Fail("NICE validation failed due to an internal error.");
         }
     }
 
-    // ── Inner response DTO ────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private sealed class NiceValidateResponse
+    private static string? TryGetJsonString(JsonElement el, string propertyName)
     {
-        public bool    Success   { get; set; }
-        public string? UserId    { get; set; }
-        public string? Email     { get; set; }
-        public string? FirstName { get; set; }
-        public string? LastName  { get; set; }
-        public string? Error     { get; set; }
+        if (el.TryGetProperty(propertyName, out var prop))
+            return prop.GetString();
+        return null;
+    }
+
+    private static string? GetClaimFromJwtPayload(string jwt, string claimName)
+    {
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+
+            var paddedPayload = parts[1].PadRight(
+                parts[1].Length + (4 - parts[1].Length % 4) % 4, '=');
+            var payloadBytes  = Convert.FromBase64String(
+                paddedPayload.Replace('-', '+').Replace('_', '/'));
+            using var doc = JsonDocument.Parse(payloadBytes);
+
+            if (!doc.RootElement.TryGetProperty(claimName, out var el)) return null;
+
+            return el.ValueKind switch
+            {
+                JsonValueKind.String => el.GetString(),
+                JsonValueKind.Array  => el.EnumerateArray().FirstOrDefault().GetString(),
+                _                    => el.ToString()
+            };
+        }
+        catch { return null; }
+    }
+
+    private static string? TryReadJwtClaim(
+        string jwt, Func<JwtSecurityToken, string?> selector)
+    {
+        try
+        {
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+            var token   = handler.ReadJwtToken(jwt);
+            return selector(token);
+        }
+        catch { return null; }
     }
 }

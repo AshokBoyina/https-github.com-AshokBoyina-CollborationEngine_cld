@@ -1,0 +1,1030 @@
+@page "/agent"
+@layout BlankLayout
+@inject IAuthService Auth
+@inject ICollaborationHubService Hub
+@inject IDemoApiService Demo
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject IConfiguration Config
+@implements IAsyncDisposable
+
+<div class="nc-page">
+
+    <!-- ── Top bar ──────────────────────────────────────────── -->
+    <div class="nc-topbar">
+        <div class="nc-topbar-brand" style="display:flex;align-items:center;gap:8px">
+            <!-- Headphone icon -->
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:.9">
+                <path d="M12 3C7.03 3 3 7.03 3 12v5a2 2 0 002 2h1a1 1 0 001-1v-5a1 1 0 00-1-1H4v-1a8 8 0 0116 0v1h-3a1 1 0 00-1 1v5a1 1 0 001 1h1a2 2 0 002-2v-5c0-4.97-4.03-9-9-9z" fill="white"/>
+            </svg>
+            <span>NASS Collaboration</span>
+            @if (!string.IsNullOrEmpty(Auth.Current.ApplicationName))
+            {
+                <span style="background:rgba(255,255,255,.2);border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:600;letter-spacing:.02em">@Auth.Current.ApplicationName</span>
+            }
+        </div>
+        <div class="nc-topbar-meta" style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;color:rgba(255,255,255,.55);font-weight:500;letter-spacing:.04em;text-transform:uppercase">Agent Dashboard</span>
+            <span style="color:rgba(255,255,255,.35)">·</span>
+            <span>@Auth.Current.ApplicationName</span>
+            @if (Hub.ConnectionState == HubConnectionState.Connected)
+            {
+                <span class="tag tag--green">● Connected</span>
+            }
+            else
+            {
+                <span class="tag tag--red">○ Offline</span>
+            }
+        </div>
+        <div class="nc-topbar-right" style="gap:10px">
+            <span class="nc-badge nc-badge--available">Available</span>
+            <span style="font-size:.8rem;color:rgba(255,255,255,.7)">Active / Max</span>
+            <span style="font-size:.9rem;font-weight:700;color:#fff">@_sessions.Count / 8</span>
+            <span style="font-size:.82rem;color:rgba(255,255,255,.85);font-weight:500;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@Auth.Current.DisplayName</span>
+            <div class="nc-avatar-btn" style="background:@AvatarColor(Auth.Current.DisplayName)" title="@Auth.Current.DisplayName">@_initials</div>
+            <button @onclick="SignOut"
+                    style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:6px;padding:4px 10px;font-size:.75rem;font-weight:600;cursor:pointer;white-space:nowrap"
+                    title="Sign out">
+                Sign out
+            </button>
+        </div>
+    </div>
+
+    <div class="nc-body">
+
+        <!-- ── Left sidebar ─────────────────────────────────── -->
+        <div class="nc-sidebar">
+            <div style="padding:10px 12px 4px">
+                <input class="nc-search" placeholder="Search sessions…" @bind="_searchTerm" @bind:event="oninput" />
+            </div>
+            <div class="nc-sidebar-scroll">
+                <div class="nc-sidebar-hd">Active (@_sessions.Count)</div>
+                @if (_sessions.Count == 0)
+                {
+                    <div style="padding:16px 12px;font-size:.78rem;color:var(--nice-text-muted);text-align:center">
+                        No active sessions.<br/>Incoming requests will appear here.
+                    </div>
+                }
+                @foreach (var s in FilteredSessions)
+                {
+                    <div class="nc-list-item @(s.CollabId == _selectedId ? "nc-list-item--active" : "")"
+                         @onclick="() => SelectSession(s.CollabId)">
+                        <div class="nc-item-av" style="background:@AvatarColor(s.CustomerName)">@Initials(s.CustomerName)</div>
+                        <div class="nc-item-body">
+                            <div style="display:flex;justify-content:space-between">
+                                <span class="nc-item-name">@s.CustomerName</span>
+                                <span class="nc-item-time">@s.StartedAt.ToString("HH:mm")</span>
+                            </div>
+                            <div class="nc-item-sub">@(s.Messages.LastOrDefault()?.Content ?? "Session started")</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ── Centre panel ─────────────────────────────────── -->
+        <div class="nc-center">
+            @if (_selected != null)
+            {
+                <!-- Session header -->
+                <div class="nc-session-hd">
+                    <div class="nc-session-title">
+                        <div class="nc-item-av" style="background:@AvatarColor(_selected.CustomerName);width:30px;height:30px;font-size:.75rem">
+                            @Initials(_selected.CustomerName)
+                        </div>
+                        <span>@_selected.CustomerName</span>
+                        <span class="tag tag--primary">@Auth.Current.ApplicationName</span>
+                        @if (_selected.IsScreenSharing)
+                        {
+                            <span class="tag tag--blue">Screen sharing</span>
+                        }
+                        @if (_selected.SupervisorName != null)
+                        {
+                            <span class="tag tag--purple">👁 @_selected.SupervisorName watching</span>
+                        }
+                    </div>
+                    <div class="nc-session-actions">
+                        <button class="btn" @onclick="OpenTransfer">Transfer</button>
+                        <button class="btn btn--danger" @onclick="EndSession">End</button>
+                    </div>
+                </div>
+
+                <!-- Chat transcript -->
+                <div class="nc-chat" id="agent-chat">
+                    @foreach (var m in _selected.Messages)
+                    {
+                        @if (m.IsBot)
+                        {
+                            <div class="nc-msg-row nc-msg-row--bot">
+                                <div class="nc-bubble nc-bubble--bot-ai">
+                                    <span style="font-size:.65rem;opacity:.7">NASS</span><br/>@m.Content
+                                </div>
+                            </div>
+                        }
+                        else if (m.IsMine)
+                        {
+                            <div class="nc-msg-row nc-msg-row--user">
+                                <div class="nc-bubble nc-bubble--user">@m.Content</div>
+                                <span class="nc-msg-time">@m.SentAt.ToString("HH:mm")</span>
+                            </div>
+                        }
+                        else if (m.IsWhisper)
+                        {
+                            <div class="nc-msg-row">
+                                <div class="nc-bubble nc-bubble--whisper">
+                                    <span class="wh-label">Whisper from @(string.IsNullOrEmpty(m.SenderName) ? "supervisor" : m.SenderName)</span>
+                                    @m.Content
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="nc-msg-row nc-msg-row--bot">
+                                <div class="nc-bubble nc-bubble--bot"
+                                     style="@(m.SenderRole == "Supervisor" ? "background:#ede9fe;border-color:#a78bfa;color:#4c1d95" : "")">
+                                    <span style="font-size:.65rem;font-weight:600;display:flex;align-items:center;gap:4px;color:@(m.SenderRole == "Supervisor" ? "#6d28d9" : "inherit");opacity:@(m.SenderRole == "Supervisor" ? "1" : ".7")">
+                                        @(string.IsNullOrEmpty(m.SenderName) ? "Customer" : m.SenderName)
+                                        @if (m.SenderRole == "Supervisor")
+                                        {
+                                            <span style="background:#6d28d9;color:#fff;border-radius:4px;padding:0 4px;font-size:.58rem;font-weight:700;letter-spacing:.04em">SUPERVISOR</span>
+                                        }
+                                    </span>
+                                    @m.Content
+                                </div>
+                                <span class="nc-msg-time">@m.SentAt.ToString("HH:mm")</span>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <!-- Reply input -->
+                <div class="nc-input-bar">
+                    <textarea class="nc-input" placeholder="Reply to @_selected.CustomerName…"
+                              rows="1"
+                              @bind="_replyText"
+                              @bind:event="oninput"
+                              @onkeydown="OnReplyKey"
+                              disabled="@_sending"></textarea>
+                    <button class="nc-send-btn" @onclick="SendReply"
+                            disabled="@(string.IsNullOrWhiteSpace(_replyText) || _sending)">
+                        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                            <path d="M2 10l16-8-8 16V11L2 10z" fill="white"/>
+                        </svg>
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--nice-text-muted);flex-direction:column;gap:8px">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" opacity=".3">
+                        <path d="M8 12h8M8 8h8M6 20l-3 1 1-3L4 6a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2H6z" stroke="var(--nice-primary)" stroke-width="1.5"/>
+                    </svg>
+                    <span>Select a session or wait for an incoming request</span>
+                </div>
+            }
+        </div>
+
+        <!-- ── Right panel ───────────────────────────────────── -->
+        <!-- When screen-sharing, lock overflow so the panel fills its column
+             height and the video can grow into all available space. -->
+        <div class="nc-rightpanel" style="@(_selected?.IsScreenSharing == true ? "overflow:hidden" : "")">
+
+            @if (_selected != null)
+            {
+                <!-- Screen share — right panel -->
+                @if (_selected.IsScreenSharing)
+                {
+                    <!-- flex:1 + min-height:0 lets this block grow to fill all available
+                         space in the flex-column right panel while the info/action sections
+                         below keep their natural height. -->
+                    <div style="position:relative;background:#111;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-bottom:1px solid var(--nice-border)">
+                        <video id="agent-screen-video-@_selected.CollabId"
+                               autoplay playsinline muted
+                               style="width:100%;height:100%;display:block;object-fit:contain;flex:1;min-height:0"
+                               onclick="this.play()"></video>
+                        <div style="position:absolute;top:8px;left:10px;display:flex;align-items:center;gap:5px;background:rgba(0,0,0,.6);border-radius:20px;padding:3px 10px;font-size:.65rem;color:#fff;font-weight:600">
+                            <span style="width:7px;height:7px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite;display:inline-block"></span>
+                            LIVE
+                        </div>
+                        <!-- Direct onclick (no Blazor async hop) so browser honours the user-gesture
+                             requirement for requestFullscreen(). -->
+                        <button style="position:absolute;top:8px;right:10px;background:rgba(0,0,0,.55);border:none;border-radius:6px;color:#fff;cursor:pointer;padding:4px 8px;font-size:.72rem"
+                                title="Fullscreen"
+                                onclick="chatHelpers.requestFullscreen('agent-screen-video-@(_selected.CollabId)')">⛶</button>
+                    </div>
+                }
+
+                <div class="nc-rp-section">
+                    <div class="nc-rp-title">Customer info</div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Name</span><span class="nc-rp-val">@_selected.CustomerName</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Session</span><span class="nc-rp-val" style="font-family:monospace;font-size:.72rem">@_selected.CollabId[..8]…</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Started</span><span class="nc-rp-val">@_selected.StartedAt.ToString("HH:mm")</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">Messages</span><span class="nc-rp-val">@_selected.Messages.Count</span></div>
+                </div>
+
+                <div class="nc-rp-section">
+                    <div class="nc-rp-title">Actions</div>
+                    <button class="btn--action" @onclick="OpenTransfer">Transfer to agent</button>
+
+                    <!-- Invite supervisor -->
+                    @if (_supervisors.Count > 0)
+                    {
+                        @if (!_showInviteSup)
+                        {
+                            <button class="btn--action btn--purple" @onclick="() => _showInviteSup = true">
+                                Invite supervisor
+                            </button>
+                        }
+                        else
+                        {
+                            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
+                                <select class="nc-input" style="font-size:.8rem;padding:6px"
+                                        value="@_inviteSupId"
+                                        @onchange="@(e => _inviteSupId = e.Value?.ToString() ?? string.Empty)">
+                                    <option value="">Select supervisor…</option>
+                                    @foreach (var sup in _supervisors)
+                                    {
+                                        <option value="@sup.UserId">@sup.DisplayName</option>
+                                    }
+                                </select>
+                                <div style="display:flex;gap:6px">
+                                    <button class="btn btn--primary" style="flex:1;font-size:.78rem"
+                                            @onclick="InviteSupervisor"
+                                            disabled="@string.IsNullOrEmpty(_inviteSupId)">Invite</button>
+                                    <button class="btn" style="font-size:.78rem"
+                                            @onclick="() => { _showInviteSup = false; _inviteSupId = string.Empty; }">✕</button>
+                                </div>
+                            </div>
+                        }
+                    }
+
+                    <button class="btn--action btn--danger" @onclick="EndSession">End session</button>
+                </div>
+            }
+            else
+            {
+                <div style="color:var(--nice-text-muted);font-size:.78rem;text-align:center;margin-top:2rem">
+                    No session selected
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ── Transfer overlay ──────────────────────────────────────────── -->
+    @if (_showTransfer)
+    {
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:200">
+            <div style="background:#fff;border-radius:var(--radius-lg);padding:1.5rem;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+                    <div style="font-weight:700;font-size:.95rem">Transfer session</div>
+                    <button class="btn" @onclick="() => { _showTransfer = false; _transferTargetAgentId = string.Empty; _transferReason = string.Empty; }" style="padding:4px 10px">✕</button>
+                </div>
+                @if (_agents.Count == 0)
+                {
+                    <div style="color:var(--nice-text-muted);font-size:.82rem;text-align:center;padding:1rem 0">No other agents available right now.</div>
+                }
+                else
+                {
+                    <div style="display:flex;flex-direction:column;gap:10px">
+                        <div>
+                            <label style="font-size:.78rem;font-weight:600;color:var(--nice-text-muted);display:block;margin-bottom:4px">Transfer to agent</label>
+                            <select class="nc-input" style="width:100%;font-size:.84rem;padding:7px 10px"
+                                    value="@_transferTargetAgentId"
+                                    @onchange="e => _transferTargetAgentId = e.Value?.ToString() ?? string.Empty">
+                                <option value="">Select agent…</option>
+                                @foreach (var a in _agents)
+                                {
+                                    <option value="@a.UserId">@a.DisplayName</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:.78rem;font-weight:600;color:var(--nice-text-muted);display:block;margin-bottom:4px">Transfer note (optional)</label>
+                            <input class="nc-input" style="width:100%;font-size:.84rem;padding:7px 10px"
+                                   placeholder="Reason for transfer…"
+                                   @bind="_transferReason" />
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:4px">
+                            <button class="btn btn--primary" style="flex:1"
+                                    @onclick="ExecuteTransfer"
+                                    disabled="@(string.IsNullOrEmpty(_transferTargetAgentId) || _isTransferring)">
+                                @(_isTransferring ? "Transferring…" : "Transfer")
+                            </button>
+                            <button class="btn" style="flex:1"
+                                    @onclick="() => { _showTransfer = false; _transferTargetAgentId = string.Empty; _transferReason = string.Empty; }">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- ── Incoming session popup ────────────────────────────── -->
+    @if (_showIncoming)
+    {
+        <div style="position:fixed;bottom:24px;right:24px;z-index:300;background:#fff;border:1.5px solid var(--nice-primary);border-radius:var(--radius-lg);padding:1.25rem;width:300px;box-shadow:0 12px 40px rgba(0,55,39,.25);animation:cw-in .28s cubic-bezier(.34,1.56,.64,1)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <div class="nc-item-av" style="width:38px;height:38px;background:@AvatarColor(_incomingName)">@Initials(_incomingName)</div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem">@(_incomingIsTransfer ? "Transfer request" : "Incoming request")</div>
+                    <div style="font-size:.75rem;color:var(--nice-text-muted)">
+                        @if (_incomingIsTransfer)
+                        {
+                            <span>Transferred by @_incomingFromAgent · Customer: @_incomingName</span>
+                        }
+                        else
+                        {
+                            <span>@_incomingName wants to chat</span>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn--primary" style="flex:1" @onclick="AcceptSession">Accept (@_countdownSec s)</button>
+                <button class="btn btn--danger" style="flex:1" @onclick="RejectSession">Decline</button>
+            </div>
+        </div>
+    }
+
+    <!-- ── Supervisor joined toast ───────────────────────────── -->
+    @if (_showSupToast)
+    {
+        <div style="position:fixed;bottom:24px;left:24px;z-index:300;background:#7c3aed;color:#fff;border-radius:var(--radius-lg);padding:12px 16px;font-size:.82rem;box-shadow:0 8px 28px rgba(124,58,237,.35);animation:cw-in .25s ease">
+            👁 Supervisor has joined this session
+        </div>
+    }
+</div>
+
+@code {
+    // ── State ──────────────────────────────────────────────────
+    string _initials    = "AG";
+    string _searchTerm  = "";
+    string _replyText   = "";
+    bool   _sending     = false;
+    bool   _showTransfer = false;
+
+    string?        _selectedId;
+    ActiveSession? _selected => _sessions.FirstOrDefault(s => s.CollabId == _selectedId);
+
+    List<ActiveSession>  _sessions    = new();
+    List<OnlineUserInfo> _supervisors = new();   // live — updated by OnOnlineUsersUpdated
+    List<OnlineUserInfo> _agents      = new();   // live — updated by OnOnlineUsersUpdated
+
+    // Screen-share pending actions — set before StateHasChanged; consumed in OnAfterRenderAsync
+    // _pendingOffers: collabId → sdp for sessions NOT currently selected (video element not in DOM yet)
+    Dictionary<string, string> _pendingOffers         = new();
+    string?                    _pendingOfferCollabId   = null;
+    string?                    _pendingOfferSdp        = null;
+
+    // ── Transfer ───────────────────────────────────────────────────────────
+    string _transferTargetAgentId = "";
+    string _transferReason        = "";
+    bool   _isTransferring        = false;
+
+    IEnumerable<ActiveSession> FilteredSessions =>
+        _sessions.Where(s => string.IsNullOrEmpty(_searchTerm) ||
+            s.CustomerName.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    // ── Incoming popup ─────────────────────────────────────────
+    bool   _showIncoming = false;
+    string _incomingCollabId = "";
+    string _incomingName     = "";
+    int    _countdownSec     = 30;
+    System.Threading.Timer? _countdownTimer;
+    bool   _incomingIsTransfer = false;
+    string _incomingFromAgent  = "";
+
+    // ── Invite supervisor ──────────────────────────────────────
+    bool   _showInviteSup = false;
+    string _inviteSupId   = "";
+
+    // ── Supervisor toast ───────────────────────────────────────
+    bool _showSupToast = false;
+    System.Threading.Timer? _toastTimer;
+
+    // ── Lifecycle ──────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.Current.IsAuthenticated) { Nav.NavigateTo("/login", replace: true); return; }
+
+        _initials = Initials(Auth.Current.DisplayName);
+
+        // Wire events
+        Hub.OnNewCollaborationRequest  += OnNewRequest;
+        Hub.OnCollaborationAccepted    += OnCollabAccepted;
+        Hub.OnCollaborationRequestTaken += OnRequestTaken;
+        Hub.OnCollaborationEnded       += OnCollabEnded;
+        Hub.OnMessageReceived          += OnMessageReceived;
+        Hub.OnWhisperReceived          += OnWhisperReceived;
+        Hub.OnOffer                    += OnScreenShareOffer;
+        Hub.OnScreenOfferRequested     += OnScreenOfferRequested;
+        Hub.OnScreenShareStopped       += OnScreenShareStopped;
+        Hub.OnSupervisorJoined         += OnSupervisorJoined;
+        Hub.OnConnectionChanged        += OnConnectionChanged;
+        Hub.OnCollaborationTransferred += OnCollaborationTransferred;
+        Hub.OnTransferReceived         += OnTransferReceived;
+        Hub.OnForceDisconnected        += OnForceDisconnected;
+        Hub.OnChatHistory              += OnChatHistoryReceived;
+        Hub.OnOnlineUsersUpdated       += OnOnlineUsersUpdated;
+
+        if (Hub.ConnectionState != HubConnectionState.Connected)
+        {
+            try { await Hub.ConnectAsync(); }
+            catch (Exception ex) { Console.WriteLine($"Hub connect failed: {ex.Message}"); }
+        }
+        // _agents and _supervisors are populated by OnOnlineUsersUpdated which the hub
+        // fires automatically on connect (BroadcastOnlineUsersAsync in OnConnectedAsync).
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.OnNewCollaborationRequest  -= OnNewRequest;
+        Hub.OnCollaborationAccepted    -= OnCollabAccepted;
+        Hub.OnCollaborationRequestTaken -= OnRequestTaken;
+        Hub.OnCollaborationEnded       -= OnCollabEnded;
+        Hub.OnMessageReceived          -= OnMessageReceived;
+        Hub.OnWhisperReceived          -= OnWhisperReceived;
+        Hub.OnOffer                    -= OnScreenShareOffer;
+        Hub.OnScreenOfferRequested     -= OnScreenOfferRequested;
+        Hub.OnScreenShareStopped       -= OnScreenShareStopped;
+        Hub.OnSupervisorJoined         -= OnSupervisorJoined;
+        Hub.OnConnectionChanged        -= OnConnectionChanged;
+        Hub.OnCollaborationTransferred -= OnCollaborationTransferred;
+        Hub.OnTransferReceived         -= OnTransferReceived;
+        Hub.OnForceDisconnected        -= OnForceDisconnected;
+        Hub.OnChatHistory              -= OnChatHistoryReceived;
+        Hub.OnOnlineUsersUpdated       -= OnOnlineUsersUpdated;
+        _countdownTimer?.Dispose();
+        _toastTimer?.Dispose();
+
+        // Release all WebRTC peer connections; all streams cleared
+        try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+    }
+
+    void OnConnectionChanged() => InvokeAsync(StateHasChanged);
+
+    /// <summary>
+    /// Fired by the hub whenever any user connects or disconnects.
+    /// Rebuilds the live agent list (for transfer) and live supervisor list (for invite)
+    /// so the dropdowns always reflect who is actually online right now.
+    /// </summary>
+    Task OnOnlineUsersUpdated(List<OnlineUserInfo> online)
+    {
+        return InvokeAsync(() =>
+        {
+            _agents = online
+                .Where(u => u.UserType == "Agent"
+                         && u.UserId.ToString() != Auth.Current.UserId)
+                .ToList();
+
+            _supervisors = online
+                .Where(u => u.UserType == "Supervisor")
+                .ToList();
+
+            StateHasChanged();
+        });
+    }
+
+    // ── SignalR event handlers ─────────────────────────────────
+    async Task OnNewRequest(string collabId, string customerName, string customerUserId)
+    {
+        await InvokeAsync(() =>
+        {
+            if (_sessions.Count >= 8) return;
+            _incomingCollabId = collabId;
+            _incomingName     = customerName;
+            _countdownSec     = 30;
+            _showIncoming     = true;
+            StartCountdown();
+            StateHasChanged();
+        });
+    }
+
+    async Task OnCollabAccepted(string collabId, string agentId, string agentName)
+    {
+        // Dismiss popup if it matches this collab (handles the accepting agent's own popup)
+        await InvokeAsync(() =>
+        {
+            if (_showIncoming && _incomingCollabId == collabId)
+            {
+                _showIncoming = false;
+                _countdownTimer?.Dispose();
+                StateHasChanged();
+            }
+        });
+    }
+
+    /// <summary>Another agent accepted a request — dismiss any matching popup on this agent's screen.</summary>
+    async Task OnRequestTaken(string collabId)
+    {
+        await InvokeAsync(() =>
+        {
+            if (_showIncoming && _incomingCollabId == collabId)
+            {
+                _showIncoming = false;
+                _countdownTimer?.Dispose();
+                StateHasChanged();
+            }
+        });
+    }
+
+    async Task OnCollabEnded(string collabId)
+    {
+        await InvokeAsync(async () =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+            if (s != null)
+            {
+                _sessions.Remove(s);
+                // Release the WebRTC PC and stored stream for this session
+                if (s.IsScreenSharing)
+                    try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+            }
+
+            // Clear any pending screen-share state for this collab
+            _pendingOffers.Remove(collabId);
+            if (_pendingOfferCollabId   == collabId) { _pendingOfferCollabId = null; _pendingOfferSdp = null; }
+            if (_pendingReattachCollabId == collabId)   _pendingReattachCollabId = null;
+
+            if (_selectedId == collabId) _selectedId = null;
+            StateHasChanged();
+        });
+    }
+
+    async Task OnMessageReceived(ChatMessage msg)
+    {
+        await InvokeAsync(async () =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == msg.CollaborationId);
+            if (s == null) return;
+            // Skip echo of messages the agent already added optimistically in SendReply()
+            if (msg.SenderId == Auth.Current.UserId) return;
+            s.Messages.Add(msg);
+            StateHasChanged();
+            if (_selectedId == s.CollabId)
+                try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "agent-chat"); } catch { }
+        });
+    }
+
+    async Task OnWhisperReceived(ChatMessage msg)
+    {
+        await InvokeAsync(async () =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == msg.CollaborationId);
+            if (s == null) return;
+            s.Messages.Add(msg);
+            StateHasChanged();
+            if (_selectedId == s.CollabId)
+                try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "agent-chat"); } catch { }
+        });
+    }
+
+    async Task OnSupervisorJoined(string collabId)
+    {
+        await InvokeAsync(() =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+            if (s == null) return;
+            s.SupervisorName = "Supervisor";
+            _showSupToast    = true;
+            StateHasChanged();
+
+            // Auto-hide toast after 4 s
+            _toastTimer?.Dispose();
+            _toastTimer = new System.Threading.Timer(_ =>
+                InvokeAsync(() => { _showSupToast = false; StateHasChanged(); }),
+                null, 4000, Timeout.Infinite);
+        });
+    }
+
+    /// <summary>Supervisor late-joined — re-send offer using the existing stream (no new screen picker).</summary>
+    async Task OnScreenOfferRequested(string collabId)
+    {
+        var session = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+        if (session == null || !session.IsScreenSharing) return;
+
+        await InvokeAsync(async () =>
+        {
+            try
+            {
+                // reOffer reuses the existing _shareStream — no new screen picker dialog
+                var sdp = await JS.InvokeAsync<string>("screenShare.reOffer");
+                if (!string.IsNullOrEmpty(sdp))
+                    await Hub.ShareScreenOfferAsync(collabId, sdp);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Re-offer failed: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>User stopped sharing — hide the video player for THAT session only.</summary>
+    async Task OnScreenShareStopped(string collabId)
+    {
+        await InvokeAsync(async () =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+            if (s == null) return;
+            s.IsScreenSharing = false;
+            StateHasChanged();
+            // stopView closes only this collab's RTCPeerConnection;
+            // other simultaneous screen-shares from different customers remain alive.
+            try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+        });
+    }
+
+    async Task OnScreenShareOffer(string collabId, string sdp)
+    {
+        // Route by the collabId embedded in the offer — NOT by _selected — so that
+        // screen shares from any customer land on the correct session regardless of
+        // which session the agent is currently viewing in the UI.
+        var session = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+        if (session == null) return;
+
+        await InvokeAsync(() =>
+        {
+            // Already sharing = re-offer triggered for a new viewer (e.g. supervisor joined).
+            // The agent's existing RTCPeerConnection is untouched; skip re-negotiation.
+            if (session.IsScreenSharing)
+            {
+                Console.WriteLine($"[Agent] OnScreenShareOffer: {collabId[..8]} already sharing — skipping (re-offer for viewer).");
+                return;
+            }
+
+            session.IsScreenSharing = true;
+
+            if (_selectedId == collabId)
+            {
+                // Currently viewed session: the <video> element is (or will be) in the DOM
+                // after this StateHasChanged. Let OnAfterRenderAsync do the JS interop safely.
+                _pendingOfferCollabId = collabId;
+                _pendingOfferSdp      = sdp;
+            }
+            else
+            {
+                // Background session: no video element in DOM yet.
+                // Buffer the offer — SelectSession will pick it up when agent switches tabs.
+                _pendingOffers[collabId] = sdp;
+                Console.WriteLine($"[Agent] OnScreenShareOffer: {collabId[..8]} buffered (not selected).");
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    // ── Actions ────────────────────────────────────────────────
+
+    // Set by SelectSession when switching to a session whose stream is already live.
+    string? _pendingReattachCollabId;
+
+    void SelectSession(string id)
+    {
+        _selectedId              = id;
+        _showInviteSup           = false;
+        _pendingReattachCollabId = null;
+        _pendingOfferCollabId    = null;
+        _pendingOfferSdp         = null;
+
+        var session = _sessions.FirstOrDefault(s => s.CollabId == id);
+        if (session?.IsScreenSharing == true)
+        {
+            if (_pendingOffers.TryGetValue(id, out var bufferedSdp))
+            {
+                // Offer arrived while this session was in the background — process it now
+                // that the <video> element is about to be rendered.
+                _pendingOfferCollabId = id;
+                _pendingOfferSdp      = bufferedSdp;
+                _pendingOffers.Remove(id);
+            }
+            else
+            {
+                // RTCPeerConnection already established; just reattach the stream to the
+                // new <video> element (Blazor unmounts and remounts it on session switch).
+                _pendingReattachCollabId = id;
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // ① Pending offer: <video> element was just created by StateHasChanged —
+        //    now safe to negotiate WebRTC and attach the stream.
+        if (_pendingOfferCollabId is not null && _pendingOfferSdp is not null)
+        {
+            var collabId = _pendingOfferCollabId;
+            var sdp      = _pendingOfferSdp;
+            _pendingOfferCollabId = null;
+            _pendingOfferSdp      = null;
+
+            try
+            {
+                var videoId         = $"agent-screen-video-{collabId}";
+                var enableRecording = Config.GetValue<bool>("ClientFeatures:EnableRecording", false);
+                var apiBase         = (Config["ApiBaseUrl"] ?? "https://localhost:65167/").TrimEnd('/') + "/";
+                var uploadUrl       = $"{apiBase}api/v1/demo/recordings/upload";
+
+                Console.WriteLine($"[Agent] receiveOffer collab={collabId[..Math.Min(8, collabId.Length)]} rec={enableRecording}");
+
+                await JS.InvokeVoidAsync("screenShare.configure", new
+                {
+                    uploadUrl,
+                    enableRecording,
+                    collaborationId = collabId
+                });
+
+                var answerSdp = await JS.InvokeAsync<string>(
+                    "screenShare.receiveOffer", collabId, sdp, videoId, enableRecording);
+                if (!string.IsNullOrEmpty(answerSdp))
+                    await Hub.ShareScreenAnswerAsync(collabId, answerSdp);
+
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Agent] receiveOffer error: {ex.Message}");
+            }
+        }
+
+        // ② Pending reattach: stream already live but <video> element was remounted —
+        //    reconnect the stored MediaStream.
+        if (_pendingReattachCollabId is not null)
+        {
+            var collabId             = _pendingReattachCollabId;
+            _pendingReattachCollabId = null;
+            try
+            {
+                await JS.InvokeVoidAsync("screenShare.reattachStream", collabId, $"agent-screen-video-{collabId}");
+                Console.WriteLine($"[Agent] Reattached stream for collab {collabId[..Math.Min(8, collabId.Length)]}");
+            }
+            catch (Exception ex) { Console.WriteLine($"[Agent] reattachStream error: {ex.Message}"); }
+        }
+    }
+
+    async Task SendReply()
+    {
+        var text = _replyText.Trim();
+        if (string.IsNullOrEmpty(text) || _selected == null) return;
+
+        _replyText = "";
+        _sending   = true;
+
+        _selected.Messages.Add(new ChatMessage
+        {
+            CollaborationId = _selected.CollabId,
+            SenderId        = Auth.Current.UserId,
+            SenderName      = Auth.Current.DisplayName,
+            Content         = text,
+            IsMine          = true,
+            SentAt          = DateTime.UtcNow
+        });
+        StateHasChanged();
+
+        try { await Hub.SendMessageAsync(_selected.CollabId, text); }
+        catch (Exception ex) { Console.WriteLine($"SendMessage error: {ex.Message}"); }
+
+        _sending = false;
+        StateHasChanged();
+        try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "agent-chat"); } catch { }
+    }
+
+    async Task OnReplyKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendReply();
+    }
+
+    async Task AcceptSession()
+    {
+        _showIncoming = false;
+        _countdownTimer?.Dispose();
+
+        var collabId   = _incomingCollabId;
+        var isTransfer = _incomingIsTransfer;
+
+        _incomingIsTransfer = false;
+        _incomingFromAgent  = string.Empty;
+
+        var session = new ActiveSession(collabId, _incomingName);
+        _sessions.Insert(0, session);
+        _selectedId = session.CollabId;
+        StateHasChanged();
+
+        if (isTransfer)
+        {
+            // For a transferred collaboration the AcceptCollaborationCommand may reject
+            // re-acceptance of an already-active collab.  Call JoinCollaborationAsync
+            // first — it has no business-logic gate and guarantees we're in the group.
+            try { await Hub.JoinCollaborationAsync(collabId); }
+            catch (Exception ex) { Console.WriteLine($"JoinCollab error: {ex.Message}"); }
+        }
+
+        try { await Hub.AcceptCollaborationAsync(collabId); }
+        catch (Exception ex) { Console.WriteLine($"Accept error: {ex.Message}"); }
+
+        // History is pushed by the server inside AcceptCollaboration via SignalR
+        // ("ChatHistory" event → OnChatHistoryReceived).  Do NOT also fetch it here
+        // via the REST API — that causes every message to appear twice.
+
+        // If this is a transferred session the customer may already be screen-sharing.
+        // Ask the hub to signal the customer to re-send their WebRTC offer.
+        if (isTransfer)
+        {
+            try
+            {
+                await Task.Delay(600);   // wait for group join + accept to propagate
+                await Hub.RequestScreenOfferAsync(collabId);
+            }
+            catch (Exception ex) { Console.WriteLine($"RequestScreenOffer error: {ex.Message}"); }
+        }
+    }
+
+    void RejectSession()
+    {
+        _showIncoming       = false;
+        _incomingIsTransfer = false;
+        _incomingFromAgent  = string.Empty;
+        _countdownTimer?.Dispose();
+    }
+
+    async Task EndSession()
+    {
+        if (_selected == null) return;
+        var collabId   = _selected.CollabId;
+        var wasSharing = _selected.IsScreenSharing;
+
+        // Clear any buffered screen-share state for this session
+        _pendingOffers.Remove(collabId);
+        if (_pendingOfferCollabId   == collabId) { _pendingOfferCollabId = null; _pendingOfferSdp = null; }
+        if (_pendingReattachCollabId == collabId)   _pendingReattachCollabId = null;
+
+        _sessions.Remove(_selected);
+        _selectedId = null;
+        StateHasChanged();
+
+        // Release the WebRTC peer connection for this session before ending
+        if (wasSharing)
+            try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+
+        try { await Hub.EndCollaborationAsync(collabId); } catch { }
+    }
+
+    async Task SignOut()
+    {
+        try { await Hub.DisconnectAsync(); } catch { }
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login", replace: true);
+    }
+
+    void OpenTransfer() { _showTransfer = true; }
+
+    // ── Avatar helpers ─────────────────────────────────────────────────────────
+    private static readonly string[] _avatarColors =
+        ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef4444","#14b8a6"];
+
+    static string AvatarColor(string name)
+    {
+        var hash = name.Aggregate(0, (acc, c) => acc ^ c);
+        return _avatarColors[Math.Abs(hash) % _avatarColors.Length];
+    }
+
+    static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name.Length > 0 ? name[0].ToString().ToUpperInvariant() : "?";
+    }
+
+    async Task ExecuteTransfer()
+    {
+        if (string.IsNullOrEmpty(_transferTargetAgentId) || _selected == null) return;
+        _isTransferring = true;
+        StateHasChanged();
+        try
+        {
+            await Hub.TransferCollaborationAsync(
+                _selected.CollabId, _transferTargetAgentId, _transferReason.Trim());
+            // Remove session from this agent's view
+            var s = _selected;
+            _sessions.Remove(s);
+            if (_selectedId == s.CollabId) _selectedId = null;
+            _showTransfer          = false;
+            _transferTargetAgentId = string.Empty;
+            _transferReason        = string.Empty;
+        }
+        catch (Exception ex) { Console.WriteLine($"Transfer error: {ex.Message}"); }
+        finally { _isTransferring = false; StateHasChanged(); }
+    }
+
+    async Task FullscreenVideo(string videoElementId)
+    {
+        try { await JS.InvokeVoidAsync("chatHelpers.requestFullscreen", videoElementId); }
+        catch (Exception ex) { Console.WriteLine($"Fullscreen error: {ex.Message}"); }
+    }
+
+    async Task InviteSupervisor()
+    {
+        if (_selected == null || string.IsNullOrEmpty(_inviteSupId)) return;
+        try
+        {
+            await Hub.InviteSupervisorAsync(_selected.CollabId, _inviteSupId);
+            _showInviteSup = false;
+            _inviteSupId   = string.Empty;
+        }
+        catch (Exception ex) { Console.WriteLine($"InviteSupervisor error: {ex.Message}"); }
+        StateHasChanged();
+    }
+
+    async Task OnCollaborationTransferred(string collabId, string toAgentId, string reason)
+    {
+        await InvokeAsync(async () =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+            if (s != null)
+            {
+                _sessions.Remove(s);
+                if (s.IsScreenSharing)
+                    try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+            }
+            _pendingOffers.Remove(collabId);
+            if (_pendingOfferCollabId   == collabId) { _pendingOfferCollabId = null; _pendingOfferSdp = null; }
+            if (_pendingReattachCollabId == collabId)   _pendingReattachCollabId = null;
+            if (_selectedId == collabId) _selectedId = null;
+            StateHasChanged();
+        });
+    }
+
+    async Task OnTransferReceived(string collabId, string fromAgentId, string customerName)
+    {
+        await InvokeAsync(() =>
+        {
+            _incomingCollabId   = collabId;
+            _incomingName       = customerName;
+            _incomingIsTransfer = true;
+            _incomingFromAgent  = fromAgentId;
+            _countdownSec       = 30;
+            _showIncoming       = true;
+            StartCountdown();
+            StateHasChanged();
+        });
+    }
+
+    void OnForceDisconnected(string reason)
+    {
+        InvokeAsync(() =>
+        {
+            Console.WriteLine($"Force disconnected: {reason}");
+            _sessions.Clear();
+            _selectedId   = null;
+            _showIncoming = false;
+            _countdownTimer?.Dispose();
+            StateHasChanged();
+        });
+    }
+
+    async Task OnChatHistoryReceived(string collabId, List<CollaborationMessageDto> history)
+    {
+        await InvokeAsync(() =>
+        {
+            var s = _sessions.FirstOrDefault(x => x.CollabId == collabId);
+            if (s == null || history.Count == 0) return;
+            s.Messages.AddRange(history.Select(m => new ChatMessage
+            {
+                CollaborationId = collabId,
+                SenderId        = m.SenderId.ToString(),
+                SenderName      = m.SenderName,
+                SenderRole      = m.SenderRole,
+                Content         = m.Content,
+                IsMine          = m.SenderId.ToString() == Auth.Current.UserId,
+                IsBot           = m.IsSystemNotice,
+                IsWhisper       = m.IsWhisper,
+                SentAt          = m.SentAt
+            }));
+            StateHasChanged();
+        });
+    }
+
+    void StartCountdown()
+    {
+        _countdownTimer?.Dispose();
+        _countdownTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                if (_countdownSec > 0)
+                {
+                    _countdownSec--;
+                    StateHasChanged();
+                }
+                else
+                {
+                    _showIncoming = false;
+                    _countdownTimer?.Dispose();
+                    StateHasChanged();
+                }
+            });
+        }, null, 1000, 1000);
+    }
+}

@@ -1,0 +1,525 @@
+@page "/standalone"
+@layout BlankLayout
+@inject IAuthService Auth
+@inject ICollaborationHubService Hub
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject HttpClient Http
+@inject IConfiguration Config
+@implements IAsyncDisposable
+
+<div class="nc-page" style="background:var(--nice-bg)">
+
+    <!-- ── Top bar ──────────────────────────────────────────── -->
+    <div class="nc-topbar">
+        <div class="nc-topbar-brand" style="display:flex;align-items:center;gap:8px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:.9">
+                <circle cx="12" cy="12" r="9" stroke="white" stroke-width="1.8"/>
+                <circle cx="12" cy="12" r="4" fill="white"/>
+            </svg>
+            <span>NASS Collaboration</span>
+            <span style="background:rgba(255,255,255,.2);border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:600">Standalone Recorder</span>
+        </div>
+        <div class="nc-topbar-meta" style="display:flex;align-items:center;gap:10px">
+            @if (Hub.ConnectionState == HubConnectionState.Connected)
+            {
+                <span class="tag tag--green">● Connected</span>
+            }
+            else
+            {
+                <span class="tag tag--red">○ @Hub.ConnectionState</span>
+            }
+        </div>
+        <div class="nc-topbar-right" style="gap:10px">
+            <span style="font-size:.82rem;color:rgba(255,255,255,.85);font-weight:500">@Auth.Current.DisplayName</span>
+            <div class="nc-avatar-btn" style="background:@AvatarColor(Auth.Current.DisplayName)">@_initials</div>
+            <button @onclick="SignOut"
+                    style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:6px;padding:4px 10px;font-size:.75rem;font-weight:600;cursor:pointer">
+                Sign out
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Main area ─────────────────────────────────────────── -->
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px">
+        <div style="background:#fff;border-radius:var(--radius-lg);box-shadow:0 8px 40px rgba(0,55,39,.12);padding:40px 48px;width:100%;max-width:560px;text-align:center">
+
+            <!-- Avatar + name -->
+            <div class="nc-item-av" style="width:64px;height:64px;font-size:1.4rem;margin:0 auto 12px;background:@AvatarColor(Auth.Current.DisplayName)">
+                @_initials
+            </div>
+            <div style="font-size:1.1rem;font-weight:700;color:var(--nice-text);margin-bottom:4px">@Auth.Current.DisplayName</div>
+            <div style="font-size:.78rem;color:var(--nice-text-muted);margin-bottom:28px">Standalone Screen Recorder</div>
+
+            <!-- Status / error -->
+            @if (!string.IsNullOrEmpty(_statusMsg))
+            {
+                <div style="margin-bottom:16px;padding:10px 16px;border-radius:8px;font-size:.82rem;
+                            background:@(_isError ? "#fef2f2" : "#f0fdf4");
+                            color:@(_isError ? "#b91c1c" : "#166534");
+                            border:1px solid @(_isError ? "#fecaca" : "#bbf7d0")">
+                    @_statusMsg
+                </div>
+            }
+
+            @if (!_sessionStarted)
+            {
+                <!-- Not yet connected to a session -->
+                <div style="color:var(--nice-text-muted);font-size:.82rem;margin-bottom:24px">
+                    @if (_busy)
+                    {
+                        <span>Setting up session…</span>
+                    }
+                    else if (Hub.ConnectionState != HubConnectionState.Connected)
+                    {
+                        <span>Connecting to server…</span>
+                    }
+                    else
+                    {
+                        <span>Ready. Click below to start sharing your screen.</span>
+                    }
+                </div>
+            }
+
+            @if (_sessionStarted && !_isRecording)
+            {
+                <!-- Session established, waiting for user to start sharing -->
+                <div style="color:var(--nice-text-muted);font-size:.82rem;margin-bottom:24px">
+                    Session active. Click <b>▶ Start Screen Share</b> to begin.
+                </div>
+                <button class="btn btn--primary"
+                        style="width:100%;padding:14px;font-size:1rem;font-weight:700;border-radius:10px;letter-spacing:.02em"
+                        disabled="@_busy"
+                        @onclick="StartSharing">
+                    @(_busy ? "Starting…" : "▶ Start Screen Share & Recording")
+                </button>
+            }
+            else if (_isRecording)
+            {
+                <!-- Live — show duration + stop button -->
+                <div style="margin-bottom:20px">
+                    <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:6px">
+                        <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;animation:pulse 1.5s infinite;display:inline-block"></span>
+                        <span style="font-size:1.6rem;font-weight:800;font-variant-numeric:tabular-nums;color:var(--nice-text)">@_duration</span>
+                    </div>
+                    <div style="font-size:.78rem;color:var(--nice-text-muted)">
+                        Sharing live · @FormatBytes(_bytesUploaded) uploaded
+                    </div>
+                    @if (!string.IsNullOrEmpty(_collabId))
+                    {
+                        <div style="font-size:.68rem;color:var(--nice-text-muted);margin-top:4px;font-family:monospace">
+                            Session @_collabId[..8]…
+                        </div>
+                    }
+                </div>
+
+                <button class="btn btn--danger"
+                        style="width:100%;padding:14px;font-size:1rem;font-weight:700;border-radius:10px"
+                        disabled="@_busy"
+                        @onclick="StopSharing">
+                    @(_busy ? "Stopping…" : "⏹ Stop & Save Recording")
+                </button>
+            }
+
+            <!-- Storage badges -->
+            @if (_isRecording || _savedLocal || _savedBlob)
+            {
+                <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">
+                    <span class="tag @(_isRecording || _savedLocal ? "tag--green" : "tag--muted")" style="font-size:.7rem">
+                        💾 Local disk @(_savedLocal ? "✓" : _isRecording ? "● live" : "")
+                    </span>
+                    <span class="tag @(_isRecording || _savedBlob ? "tag--blue" : "tag--muted")" style="font-size:.7rem">
+                        ☁ Azure Blob @(_savedBlob ? "✓" : _isRecording ? "● live" : "")
+                    </span>
+                </div>
+            }
+
+            <!-- WebRTC signalling log (always visible when recording) -->
+            @if (_signalLog.Count > 0)
+            {
+                <div style="margin-top:20px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;text-align:left">
+                    <div style="font-size:.7rem;font-weight:700;color:#166534;margin-bottom:6px;display:flex;justify-content:space-between">
+                        <span>▶ WebRTC Signalling Log</span>
+                        <span style="font-weight:400;opacity:.7">last @_signalLog.Count events</span>
+                    </div>
+                    @foreach (var line in _signalLog)
+                    {
+                        var color = line.Contains("✗") ? "#991b1b"
+                                  : line.Contains("⚠") ? "#92400e"
+                                  : "#166534";
+                        <div style="font-size:.68rem;font-family:monospace;color:@color;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                            @line
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- Instructions -->
+            @if (!_isRecording && !_sessionStarted)
+            {
+                <div style="margin-top:28px;padding:14px;background:#f8fafc;border-radius:8px;text-align:left;font-size:.78rem;color:var(--nice-text-muted)">
+                    <b style="color:var(--nice-text)">How it works</b><br/>
+                    1. A collaboration session is created automatically when you connect.<br/>
+                    2. Click <b>▶ Start Screen Share</b> — your browser will ask which screen to share.<br/>
+                    3. The stream is live to any monitor watching and recorded to disk + Azure Blob.<br/>
+                    4. Click <b>⏹ Stop</b> to end the session and finalise the recording.
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    string _initials   = "ST";
+    string _collabId   = "";
+    string _recordingId = "";
+    string _statusMsg  = "";
+    bool   _isError    = false;
+    bool   _busy       = false;
+    bool   _sessionStarted = false;
+    bool   _isRecording    = false;
+    bool   _savedLocal  = false;
+    bool   _savedBlob   = false;
+    long   _bytesUploaded = 0;
+    DateTime _startTime = DateTime.UtcNow;
+    System.Threading.Timer? _timer;
+    string _duration = "0:00";
+
+    // ── Signalling diagnostics ──────────────────────────────────
+    List<string> _signalLog = new();
+    void AddSignalLog(string msg)
+    {
+        var entry = $"{DateTime.Now:HH:mm:ss} {msg}";
+        Console.WriteLine($"[StandaloneRecorder] {entry}");
+        _signalLog.Add(entry);
+        if (_signalLog.Count > 20) _signalLog.RemoveAt(0);
+        InvokeAsync(StateHasChanged);
+    }
+
+    // ── Lifecycle ──────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.Current.IsAuthenticated) { Nav.NavigateTo("/login", replace: true); return; }
+
+        _initials = Initials(Auth.Current.DisplayName);
+
+        Hub.OnCollaborationEnded    += OnSessionEnded;
+        Hub.OnConnectionChanged     += OnConnectionChanged;
+        Hub.OnForceDisconnected     += OnForceDisconnected;
+        Hub.OnScreenOfferRequested  += OnScreenOfferRequested;  // re-offer for new monitors joining
+        Hub.OnAnswer                += OnAnswerReceived;        // complete WebRTC handshake with monitor
+
+        // Subscribe so JS can notify us when the browser "Stop sharing" button is clicked
+        if (Hub.ConnectionState != HubConnectionState.Connected)
+        {
+            try { await Hub.ConnectAsync(); }
+            catch (Exception ex) { SetStatus($"Connection failed: {ex.Message}", error: true); return; }
+        }
+
+        // Create the standalone collaboration immediately on login
+        _busy = true;
+        StateHasChanged();
+        try
+        {
+            Hub.OnStandaloneSessionStarted += OnStandaloneSessionStarted;
+            await Hub.StartStandaloneSessionAsync();
+            // _collabId is set in OnStandaloneSessionStarted
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Session setup failed: {ex.Message}", error: true);
+        }
+        _busy = false;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _timer?.Dispose();
+
+        Hub.OnCollaborationEnded   -= OnSessionEnded;
+        Hub.OnConnectionChanged    -= OnConnectionChanged;
+        Hub.OnForceDisconnected    -= OnForceDisconnected;
+        Hub.OnScreenOfferRequested -= OnScreenOfferRequested;
+        Hub.OnAnswer               -= OnAnswerReceived;
+        Hub.OnStandaloneSessionStarted -= OnStandaloneSessionStarted;
+
+        // Stop share + recording on page unload
+        if (_isRecording)
+        {
+            try { await JS.InvokeVoidAsync("screenShare.stopSenderRecording"); } catch { }
+            try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+            if (!string.IsNullOrEmpty(_collabId))
+                try { await Hub.StopScreenShareAsync(_collabId); } catch { }
+            if (!string.IsNullOrEmpty(_recordingId))
+                try { await StopRecordingApiAsync(); } catch { }
+            if (!string.IsNullOrEmpty(_collabId))
+                try { await Hub.EndCollaborationAsync(_collabId); } catch { }
+        }
+
+        try { await Hub.DisconnectAsync(); } catch { }
+    }
+
+    // ── Hub events ─────────────────────────────────────────────
+    Task OnStandaloneSessionStarted(StandaloneSessionInfo info)
+    {
+        _collabId      = info.CollaborationId;
+        _sessionStarted = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    Task OnSessionEnded(string collabId) => InvokeAsync(async () =>
+    {
+        if (collabId != _collabId) return;
+        _isRecording    = false;
+        _sessionStarted = false;
+        _timer?.Dispose();
+        SetStatus("Session ended.", error: false);
+        StateHasChanged();
+    });
+
+    async Task OnScreenOfferRequested(string collabId)
+    {
+        // A new monitor joined and wants our stream — re-offer without a new screen picker.
+        // NOTE: do NOT gate on _isRecording here. The monitor may join in the window between
+        // getOffer() returning and _isRecording being set to true (e.g. while the recording
+        // API call is in flight). reOffer() itself returns "" if no _shareStream is active,
+        // so the safeguard is already in JS.
+        if (collabId != _collabId) return;
+
+        AddSignalLog("↺ ScreenOfferRequested received — calling reOffer…");
+        await InvokeAsync(async () =>
+        {
+            try
+            {
+                var sdp = await JS.InvokeAsync<string>("screenShare.reOffer");
+                if (!string.IsNullOrEmpty(sdp))
+                {
+                    AddSignalLog($"✓ reOffer OK ({sdp.Length} bytes) — sending Offer to hub");
+                    await Hub.ShareScreenOfferAsync(_collabId, sdp);
+                }
+                else
+                {
+                    AddSignalLog("⚠ reOffer returned empty — _shareStream not active yet");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddSignalLog($"✗ reOffer exception: {ex.Message}");
+            }
+        });
+    }
+
+    async Task OnAnswerReceived(string collabId, string sdp)
+    {
+        // The StandaloneMonitor has answered our WebRTC offer — complete the handshake.
+        if (collabId != _collabId) return;
+
+        AddSignalLog($"← Answer received ({sdp?.Length ?? 0} bytes) — applying setAnswer…");
+        await InvokeAsync(async () =>
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("screenShare.setAnswer", sdp);
+                AddSignalLog("✓ setAnswer applied — WebRTC ICE negotiating");
+                Console.WriteLine($"[StandaloneRecorder] WebRTC answer applied for collab {collabId[..Math.Min(8,collabId.Length)]}");
+            }
+            catch (Exception ex)
+            {
+                AddSignalLog($"✗ setAnswer error: {ex.Message}");
+            }
+        });
+    }
+
+    void OnConnectionChanged() => InvokeAsync(StateHasChanged);
+
+    void OnForceDisconnected(string reason)
+    {
+        InvokeAsync(async () =>
+        {
+            await JS.InvokeVoidAsync("alert", $"Session ended: {reason}");
+            await Auth.LogoutAsync();
+            Nav.NavigateTo("/login", replace: true);
+        });
+    }
+
+    // ── Actions ────────────────────────────────────────────────
+    async Task StartSharing()
+    {
+        if (_busy || string.IsNullOrEmpty(_collabId)) return;
+        _busy = true;
+        SetStatus("Requesting screen access…");
+        StateHasChanged();
+
+        try
+        {
+            // 1. Start WebRTC screen capture + get SDP offer
+            AddSignalLog("→ getOffer() — requesting screen capture…");
+            var sdp = await JS.InvokeAsync<string>("screenShare.getOffer", (object?)null);
+            if (string.IsNullOrEmpty(sdp))
+            {
+                SetStatus("Screen capture was cancelled or denied.", error: true);
+                _busy = false;
+                StateHasChanged();
+                return;
+            }
+            AddSignalLog($"✓ getOffer OK ({sdp.Length} bytes) — _shareStream captured");
+
+            // 2. Signal offer to any waiting monitors via hub
+            AddSignalLog("→ ShareScreenOffer to hub (initial broadcast)…");
+            await Hub.ShareScreenOfferAsync(_collabId, sdp);
+            AddSignalLog("✓ Initial Offer sent — monitors in group will respond");
+
+            // 3. Start server-side recording (local disk + Azure Blob)
+            var apiBase   = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+            var startResp = await Http.SendAsync(BuildRecordingRequest("POST",
+                $"{apiBase}/api/v1/collaboration/recordings/start",
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    collaborationId = Guid.Parse(_collabId),
+                    type            = "Standalone"
+                })));
+
+            if (startResp.IsSuccessStatusCode)
+            {
+                var json = await startResp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+                _recordingId = json.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+            }
+
+            // 4. Start client-side chunk uploader using the ALREADY-CAPTURED _shareStream
+            //    (no second getDisplayMedia call — avoids the double screen picker prompt)
+            if (!string.IsNullOrEmpty(_recordingId))
+            {
+                var chunkUrl = $"{apiBase}/api/v1/collaboration/recordings/{_recordingId}/chunks";
+                await JS.InvokeVoidAsync("screenShare.startSenderRecording", _recordingId, chunkUrl, Auth.Current.Token);
+                _savedLocal = true;
+                _savedBlob  = true;   // DualRecordingStreamStore handles both in the API
+            }
+
+            _startTime   = DateTime.UtcNow;
+            _isRecording = true;
+            _busy        = false;
+            SetStatus("", error: false);
+
+            // 5. Tick timer for duration display
+            _timer = new System.Threading.Timer(_ =>
+                InvokeAsync(() => { _duration = Elapsed(); StateHasChanged(); }),
+                null, 1000, 1000);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Error: {ex.Message}", error: true);
+            _busy = false;
+        }
+
+        StateHasChanged();
+    }
+
+    async Task StopSharing()
+    {
+        if (_busy || !_isRecording) return;
+        _busy = true;
+        SetStatus("Stopping…");
+        StateHasChanged();
+
+        try
+        {
+            // Stop chunk uploader (flushes remaining data), then stop WebRTC + stream
+            try { await JS.InvokeVoidAsync("screenShare.stopSenderRecording"); } catch { }
+            try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+
+            // Notify monitors
+            try { await Hub.StopScreenShareAsync(_collabId); } catch { }
+
+            // Finalise recording on server
+            if (!string.IsNullOrEmpty(_recordingId))
+                await StopRecordingApiAsync();
+
+            // End the collaboration
+            try { await Hub.EndCollaborationAsync(_collabId); } catch { }
+
+            _isRecording  = false;
+            _sessionStarted = false;
+            SetStatus("Recording saved to local disk and Azure Blob.", error: false);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Stop error: {ex.Message}", error: true);
+        }
+        finally
+        {
+            _timer?.Dispose();
+            _timer = null;
+            _busy  = false;
+        }
+
+        StateHasChanged();
+    }
+
+    // ── Helpers ────────────────────────────────────────────────
+    async Task StopRecordingApiAsync()
+    {
+        try
+        {
+            var apiBase = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+            var url     = $"{apiBase}/api/v1/collaboration/recordings/{_recordingId}/stop?blobPath=standalone/{_collabId}/{_recordingId}.webm";
+            var req     = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {Auth.Current.Token}");
+            req.Headers.TryAddWithoutValidation("X-Api-Key", "chat-ui-key");
+            await Http.SendAsync(req);
+        }
+        catch (Exception ex) { Console.WriteLine($"[StandaloneRecorder] StopRecording API error: {ex.Message}"); }
+    }
+
+    HttpRequestMessage BuildRecordingRequest(string method, string url, string body)
+    {
+        var req = new HttpRequestMessage(new HttpMethod(method), url)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+        };
+        req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {Auth.Current.Token}");
+        req.Headers.TryAddWithoutValidation("X-Api-Key", "chat-ui-key");
+        return req;
+    }
+
+    void SetStatus(string msg, bool error = false)
+    {
+        _statusMsg = msg;
+        _isError   = error;
+    }
+
+    string Elapsed()
+    {
+        var e = DateTime.UtcNow - _startTime;
+        return e.TotalHours >= 1
+            ? $"{(int)e.TotalHours}:{e.Minutes:D2}:{e.Seconds:D2}"
+            : $"{e.Minutes}:{e.Seconds:D2}";
+    }
+
+    static string FormatBytes(long b) => b switch
+    {
+        >= 1_048_576 => $"{b / 1_048_576.0:F1} MB",
+        >= 1_024     => $"{b / 1_024.0:F0} KB",
+        _            => $"{b} B"
+    };
+
+    async Task SignOut()
+    {
+        try { await Hub.DisconnectAsync(); } catch { }
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login", replace: true);
+    }
+
+    static string Initials(string name)
+    {
+        var p = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return p.Length >= 2 ? $"{p[0][0]}{p[^1][0]}".ToUpperInvariant()
+             : name.Length > 0 ? name[0].ToString().ToUpperInvariant() : "ST";
+    }
+
+    static string AvatarColor(string name)
+    {
+        var colors = new[] { "#003727","#1d4ed8","#7c3aed","#be185d","#b45309","#0f766e" };
+        return colors[Math.Abs(name.Aggregate(0, (a, c) => a ^ c)) % colors.Length];
+    }
+}

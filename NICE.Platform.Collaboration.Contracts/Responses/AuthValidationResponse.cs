@@ -50,6 +50,7 @@ public class AuthenticatedUserDto
     public string  UserType        { get; set; } = default!;
 
     public string  ApplicationName { get; set; } = default!;
+    public Guid    ApplicationId   { get; set; }
     public Guid    SessionId       { get; set; }
 }
 

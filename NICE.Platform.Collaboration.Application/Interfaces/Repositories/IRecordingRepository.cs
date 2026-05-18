@@ -1,5 +1,7 @@
 namespace NICE.Platform.Collaboration.Application.Interfaces.Repositories;
+
 using NICE.Platform.Collaboration.Core.Entities;
+
 public interface IRecordingRepository
 {
     Task<CollaborationRecording?> GetByIdAsync(Guid id, CancellationToken ct);

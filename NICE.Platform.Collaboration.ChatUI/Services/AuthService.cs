@@ -1,0 +1,130 @@
+using System.Text.Json;
+using NICE.Platform.Collaboration.ChatUI.Models;
+using Microsoft.JSInterop;
+
+namespace NICE.Platform.Collaboration.ChatUI.Services;
+
+public class AuthService(HttpClient http, IJSRuntime js) : IAuthService
+{
+    private static readonly JsonSerializerOptions JsonOpts =
+        new(JsonSerializerDefaults.Web);
+
+    private UserSession _current = new();
+
+    public UserSession Current   => _current;
+    public event Action? OnChange;
+
+    public async Task<LoginResponse> LoginAsync(LoginRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(
+                HttpMethod.Post,
+                "api/v1/collaboration/auth/validate");
+
+            req.Headers.TryAddWithoutValidation("X-Api-Key",    request.ApiKey);
+            req.Headers.TryAddWithoutValidation("X-Access-Key", request.ApplicationName);
+            req.Headers.TryAddWithoutValidation("AuthToken",    request.AuthToken);
+            req.Headers.TryAddWithoutValidation("UserType",     request.UserType);
+
+            var resp = await http.SendAsync(req, ct);
+            var json = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                string errorMsg;
+                try
+                {
+                    var errDoc = JsonSerializer.Deserialize<JsonElement>(json, JsonOpts);
+                    errorMsg = errDoc.TryGetProperty("error", out var e) ? e.GetString() ?? json : json;
+                }
+                catch { errorMsg = json; }
+                return new LoginResponse { Error = $"HTTP {(int)resp.StatusCode}: {errorMsg}" };
+            }
+
+            var doc = JsonSerializer.Deserialize<JsonElement>(json, JsonOpts);
+
+            if (!doc.TryGetProperty("success", out var successProp) || !successProp.GetBoolean())
+            {
+                var err = doc.TryGetProperty("error", out var ep) ? ep.GetString() : "Unknown error";
+                return new LoginResponse { Error = err ?? "Login failed." };
+            }
+
+            var sessionToken = doc.TryGetProperty("sessionToken", out var tp) ? tp.GetString() : null;
+            if (string.IsNullOrEmpty(sessionToken))
+                return new LoginResponse { Error = "No session token returned." };
+
+            var user            = doc.TryGetProperty("user", out var up) ? up : default;
+            var userId          = Str(user, "userId")          ?? Guid.NewGuid().ToString();
+            var firstName       = Str(user, "firstName")       ?? "";
+            var lastName        = Str(user, "lastName")        ?? "";
+            var userType        = Str(user, "userType")        ?? request.UserType;
+            var applicationId   = Str(user, "applicationId")  ?? string.Empty;
+            var applicationName = Str(user, "applicationName") ?? request.ApplicationName;
+
+            _current = new UserSession
+            {
+                Token           = sessionToken,
+                UserId          = userId,
+                DisplayName     = $"{firstName} {lastName}".Trim(),
+                UserType        = userType,
+                ApplicationId   = applicationId,
+                ApplicationName = applicationName
+            };
+
+            // Persist full session so a browser refresh can restore it without re-login
+            var sessionJson = JsonSerializer.Serialize(_current, JsonOpts);
+            await js.InvokeVoidAsync("chatStorage.saveSession", sessionJson);
+            OnChange?.Invoke();
+
+            return new LoginResponse
+            {
+                Success     = true,
+                Token       = sessionToken,
+                UserId      = userId,
+                DisplayName = _current.DisplayName,
+                UserType    = userType
+            };
+        }
+        catch (Exception ex)
+        {
+            return new LoginResponse { Error = ex.Message };
+        }
+    }
+
+    public void Logout()
+    {
+        _current = new();
+        // Fire-and-forget clear (sync callers can't await)
+        _ = js.InvokeVoidAsync("chatStorage.clear").AsTask();
+        OnChange?.Invoke();
+    }
+
+    public async Task LogoutAsync(CancellationToken ct = default)
+    {
+        _current = new();
+        try { await js.InvokeVoidAsync("chatStorage.clear", ct); } catch { }
+        OnChange?.Invoke();
+    }
+    private static string? Str(System.Text.Json.JsonElement el, string prop) =>
+        el.ValueKind == System.Text.Json.JsonValueKind.Object &&
+        el.TryGetProperty(prop, out var v) ? v.GetString() : null;
+
+    public async Task TryRestoreAsync()
+    {
+        try
+        {
+            var saved = await js.InvokeAsync<string?>("chatStorage.get", "session");
+            if (!string.IsNullOrEmpty(saved))
+            {
+                var restored = System.Text.Json.JsonSerializer.Deserialize<UserSession>(saved);
+                if (restored is not null && !string.IsNullOrEmpty(restored.Token))
+                {
+                    _current = restored;
+                    OnChange?.Invoke();
+                }
+            }
+        }
+        catch { }
+    }
+}

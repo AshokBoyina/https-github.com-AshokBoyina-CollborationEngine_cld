@@ -1,0 +1,450 @@
+@page "/setup"
+@inject IDemoApiService Demo
+@inject NavigationManager Nav
+
+<PageTitle>Demo Setup — NICE Collaboration</PageTitle>
+
+<div class="ds-wrap">
+
+    <!-- ── Header ──────────────────────────────────────────────────────── -->
+    <div class="ds-header">
+        <div>
+            <div class="ds-logo">NICE Platform</div>
+            <div class="ds-subtitle">Demo Setup Console</div>
+        </div>
+        <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+            <button class="ds-btn ds-btn-primary" @onclick="SeedAsync" disabled="@_busy">
+                @if (_busy) { <span class="ds-spin"></span> }
+                @(_seeded ? "Re-Seed DB" : "Seed Applications into DB")
+            </button>
+            @if (_seeded)
+            {
+                <span class="ds-badge ds-badge-ok">✓ DB Ready</span>
+            }
+            else if (_dbChecked)
+            {
+                <span class="ds-badge ds-badge-warn">⚠ DB Not Seeded</span>
+            }
+            <a href="/login" class="ds-btn ds-btn-outline">← Back to Login</a>
+        </div>
+    </div>
+
+    <!-- ── Status / Error bar ──────────────────────────────────────────── -->
+    @if (!string.IsNullOrEmpty(_statusMsg))
+    {
+        <div class="ds-alert @(_statusOk ? "ds-alert-ok" : "ds-alert-err")">
+            @_statusMsg
+            @if (_statusMsg.Contains("migration") || _statusMsg.Contains("table") || _statusMsg.Contains("500"))
+            {
+                <div style="margin-top:.4rem;font-size:.82rem">
+                    Run: <code>dotnet ef database update --project NICE.Platform.Collaboration.Infrastructure --startup-project NICE.Platform.Collaboration.API</code>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- ── Diagnostic banner (shown while loading or on API error) ─────── -->
+    @if (_loading)
+    {
+        <div class="ds-alert ds-alert-info">Connecting to API at <code>@_apiBase</code> …</div>
+        <div class="ds-empty"><span class="ds-spin ds-spin-lg"></span></div>
+    }
+
+    @if (!_loading && !_apiReachable)
+    {
+        <div class="ds-alert ds-alert-err">
+            <strong>Cannot reach API</strong> at <code>@_apiBase</code>.<br />
+            Make sure the API project is running. Check <code>wwwroot/appsettings.json → ApiBaseUrl</code>.
+        </div>
+    }
+
+    <!-- ── App Tabs — always shown once API is reachable ─────────────────── -->
+    @if (!_loading)
+    {
+        <div class="ds-tabs">
+            @foreach (var app in _staticApps)
+            {
+                <button class="ds-tab @(_activeApp?.Name == app.Name ? "ds-tab-active" : "")"
+                        @onclick="() => SelectApp(app)">
+                    @app.Name
+                    <span class="ds-tag-provider ds-tag-@app.AuthProvider.ToLower()">@app.AuthProvider</span>
+                </button>
+            }
+        </div>
+
+        @if (_activeApp is not null)
+        {
+            <!-- ── App Info bar ──────────────────────────────────────────── -->
+            <div class="ds-infobar">
+                <span><b>Auth Provider:</b> @_activeApp.AuthProvider</span>
+                <span><b>API Key:</b> <code class="ds-code">@_activeApp.ApiKey</code></span>
+                <span><b>App ID:</b> <code class="ds-code" style="font-size:.72rem">@_activeApp.Id</code></span>
+                @if (!_seeded)
+                {
+                    <span class="ds-badge ds-badge-warn" style="font-size:.75rem">
+                        Seed DB first — users won't persist without it
+                    </span>
+                }
+            </div>
+
+            <!-- ── Columns: Agents | Supervisors | Guide ────────────────── -->
+            <div class="ds-columns">
+
+                <!-- ── Agent Panel ──────────────────────────────────────── -->
+                <div class="ds-panel">
+                    <div class="ds-panel-hdr">
+                        <span>Agents</span>
+                        <span class="ds-badge ds-badge-info">@_agents.Count</span>
+                    </div>
+
+                    @foreach (var u in _agents)
+                    {
+                        <div class="ds-user-row">
+                            <div class="ds-avatar">@FirstLetter(u.FirstName)@FirstLetter(u.LastName)</div>
+                            <div style="flex:1;min-width:0">
+                                <div class="ds-user-name">@u.DisplayName</div>
+                                <div class="ds-user-token"><code>@u.Token</code></div>
+                            </div>
+                            <div style="display:flex;gap:.4rem">
+                                <button class="ds-btn ds-btn-sm ds-btn-primary"
+                                        @onclick="() => QuickLogin(u, _activeApp!)">↗ Login</button>
+                                <button class="ds-btn ds-btn-sm ds-btn-danger"
+                                        @onclick="() => RemoveAsync(u)">✕</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (_agents.Count == 0)
+                    {
+                        <div class="ds-no-users">No agents yet — add one below</div>
+                    }
+
+                    <div class="ds-add-form">
+                        <input class="ds-input" placeholder="Full name  e.g. Alice Smith"
+                               @bind="_newAgentName" @bind:event="oninput"
+                               @onkeydown="@(async e => { if (e.Key == "Enter") await AddAgentAsync(); })" />
+                        <button class="ds-btn ds-btn-primary ds-btn-sm"
+                                disabled="@(string.IsNullOrWhiteSpace(_newAgentName) || _busy)"
+                                @onclick="AddAgentAsync">
+                            + Add
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ── Supervisor Panel ──────────────────────────────────── -->
+                <div class="ds-panel">
+                    <div class="ds-panel-hdr">
+                        <span>Supervisors</span>
+                        <span class="ds-badge ds-badge-info">@_supervisors.Count</span>
+                    </div>
+
+                    @foreach (var u in _supervisors)
+                    {
+                        <div class="ds-user-row">
+                            <div class="ds-avatar ds-avatar-sup">@FirstLetter(u.FirstName)@FirstLetter(u.LastName)</div>
+                            <div style="flex:1;min-width:0">
+                                <div class="ds-user-name">@u.DisplayName</div>
+                                <div class="ds-user-token"><code>@u.Token</code></div>
+                            </div>
+                            <div style="display:flex;gap:.4rem">
+                                <button class="ds-btn ds-btn-sm ds-btn-primary"
+                                        @onclick="() => QuickLogin(u, _activeApp!)">↗ Login</button>
+                                <button class="ds-btn ds-btn-sm ds-btn-danger"
+                                        @onclick="() => RemoveAsync(u)">✕</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (_supervisors.Count == 0)
+                    {
+                        <div class="ds-no-users">No supervisors yet — add one below</div>
+                    }
+
+                    <div class="ds-add-form">
+                        <input class="ds-input" placeholder="Full name  e.g. Bob Taylor"
+                               @bind="_newSupervisorName" @bind:event="oninput"
+                               @onkeydown="@(async e => { if (e.Key == "Enter") await AddSupervisorAsync(); })" />
+                        <button class="ds-btn ds-btn-primary ds-btn-sm"
+                                disabled="@(string.IsNullOrWhiteSpace(_newSupervisorName) || _busy)"
+                                @onclick="AddSupervisorAsync">
+                            + Add
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ── Quick-Start Guide ─────────────────────────────────── -->
+                <div class="ds-panel ds-guide">
+                    <div class="ds-panel-hdr"><span>Quick Start</span></div>
+                    <ol class="ds-guide-list">
+                        <li>Click <strong>Seed Applications into DB</strong> once to create the apps in SQL.</li>
+                        <li>Add at least one <strong>Agent</strong> and one <strong>Supervisor</strong>.</li>
+                        <li>Click <strong>↗ Login</strong> — lands directly on that user's console.</li>
+                        <li>Open a second tab → <code>/login</code> → pick <em>External</em> on the same app → any token → customer chat.</li>
+                        <li>External user clicks <em>Talk to an Agent</em> → agent sees the incoming chat.</li>
+                    </ol>
+                    <div class="ds-guide-section">
+                        <div class="ds-guide-title">Token format</div>
+                        <p>The login token is auto-generated from the name you type.<br/>
+                        <code>Alice Smith</code> → token <code>alice-smith</code></p>
+                    </div>
+                    <div class="ds-guide-section">
+                        <div class="ds-guide-title">App ↔ Auth provider</div>
+                        <div class="ds-mapping">
+                            <div><span class="ds-tag-provider ds-tag-anon">ANON</span> SurveyPortal — any token</div>
+                            <div><span class="ds-tag-provider ds-tag-readi">READI</span> CustomerSupport — mock</div>
+                            <div><span class="ds-tag-provider ds-tag-nice">NICE</span> NicePortal — mock</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        }
+    }
+</div>
+
+<style>
+    .ds-wrap { max-width:1200px; margin:0 auto; padding:1.5rem 1rem 3rem; font-family:var(--nice-font,system-ui,sans-serif); }
+
+    .ds-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.25rem; }
+    .ds-logo   { font-size:1.4rem; font-weight:700; color:var(--nice-primary,#005B41); }
+    .ds-subtitle { font-size:.85rem; color:#888; margin-top:2px; }
+
+    /* Alerts */
+    .ds-alert { padding:.7rem 1rem; border-radius:8px; margin-bottom:1rem; font-size:.875rem; line-height:1.5; }
+    .ds-alert-ok   { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
+    .ds-alert-err  { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+    .ds-alert-warn { background:#fff3cd; color:#856404; border:1px solid #ffeeba; }
+    .ds-alert-info { background:#cce5ff; color:#004085; border:1px solid #b8daff; }
+
+    /* Badges */
+    .ds-badge { display:inline-block; padding:.15rem .55rem; border-radius:20px; font-size:.75rem; font-weight:600; }
+    .ds-badge-ok   { background:#d4edda; color:#155724; }
+    .ds-badge-warn { background:#fff3cd; color:#856404; }
+    .ds-badge-info { background:#cce5ff; color:#004085; }
+
+    /* Provider tags */
+    .ds-tag-provider { display:inline-block; padding:.1rem .45rem; border-radius:4px; font-size:.7rem; font-weight:700; margin-left:.4rem; }
+    .ds-tag-anon  { background:#fff3cd; color:#856404; }
+    .ds-tag-readi { background:#cce5ff; color:#004085; }
+    .ds-tag-nice  { background:#d4edda; color:#155724; }
+
+    /* Tabs */
+    .ds-tabs { display:flex; gap:.5rem; margin-bottom:1rem; border-bottom:2px solid #e9ecef; padding-bottom:.5rem; flex-wrap:wrap; }
+    .ds-tab  { background:none; border:none; padding:.5rem 1.1rem; border-radius:6px 6px 0 0; cursor:pointer; font-size:.9rem; color:#555; transition:all .15s; display:flex; align-items:center; }
+    .ds-tab:hover     { background:#f2f7f5; color:var(--nice-primary,#005B41); }
+    .ds-tab-active    { background:var(--nice-primary,#005B41) !important; color:#fff !important; font-weight:600; }
+    .ds-tab-active .ds-tag-provider { opacity:.8; }
+
+    /* Info bar */
+    .ds-infobar { display:flex; gap:1.25rem; align-items:center; background:#f8f9fa; border-radius:8px; padding:.6rem 1rem; margin-bottom:1rem; font-size:.875rem; flex-wrap:wrap; }
+    .ds-code { background:#e9ecef; padding:.1rem .4rem; border-radius:4px; font-size:.8rem; font-family:monospace; }
+
+    /* Columns */
+    .ds-columns { display:grid; grid-template-columns:1fr 1fr 280px; gap:1rem; }
+    @@media (max-width:900px) { .ds-columns { grid-template-columns:1fr 1fr; } .ds-guide { display:none; } }
+    @@media (max-width:600px) { .ds-columns { grid-template-columns:1fr; } }
+
+    /* Panels */
+    .ds-panel     { background:#fff; border:1px solid #e9ecef; border-radius:10px; overflow:hidden; }
+    .ds-panel-hdr { display:flex; justify-content:space-between; align-items:center; padding:.7rem 1rem; background:#f8f9fa; border-bottom:1px solid #e9ecef; font-weight:600; font-size:.9rem; }
+
+    /* User rows */
+    .ds-user-row  { display:flex; align-items:center; gap:.75rem; padding:.6rem 1rem; border-bottom:1px solid #f2f2f2; }
+    .ds-avatar    { width:34px; height:34px; border-radius:50%; background:var(--nice-primary,#005B41); color:#fff; font-size:.72rem; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .ds-avatar-sup { background:#6f42c1; }
+    .ds-user-name  { font-weight:600; font-size:.875rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .ds-user-token { font-size:.75rem; color:#888; }
+    .ds-user-token code { font-family:monospace; background:#f0f0f0; padding:.05rem .3rem; border-radius:3px; }
+    .ds-no-users   { padding:1rem; color:#aaa; font-size:.84rem; text-align:center; font-style:italic; }
+
+    /* Add form */
+    .ds-add-form { display:flex; gap:.5rem; padding:.7rem 1rem; border-top:1px solid #e9ecef; }
+    .ds-input    { flex:1; border:1px solid #ced4da; border-radius:6px; padding:.4rem .7rem; font-size:.85rem; outline:none; min-width:0; }
+    .ds-input:focus { border-color:var(--nice-primary,#005B41); box-shadow:0 0 0 2px rgba(0,91,65,.15); }
+
+    /* Buttons */
+    .ds-btn     { border:none; border-radius:6px; padding:.45rem .9rem; font-size:.85rem; cursor:pointer; font-weight:500; display:inline-flex; align-items:center; gap:.4rem; transition:opacity .15s; text-decoration:none; }
+    .ds-btn:disabled { opacity:.5; cursor:default; }
+    .ds-btn-primary { background:var(--nice-primary,#005B41); color:#fff; }
+    .ds-btn-primary:hover:not(:disabled) { background:var(--nice-primary-strong,#003727); }
+    .ds-btn-outline { background:transparent; color:var(--nice-primary,#005B41); border:1.5px solid currentColor; }
+    .ds-btn-outline:hover { background:var(--nice-primary-soft,#F2F7F5); }
+    .ds-btn-danger  { background:#dc3545; color:#fff; }
+    .ds-btn-danger:hover:not(:disabled) { background:#b02a37; }
+    .ds-btn-sm  { padding:.3rem .6rem; font-size:.8rem; }
+
+    /* Spinner */
+    .ds-spin    { width:14px; height:14px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:ds-rotate .7s linear infinite; display:inline-block; vertical-align:middle; }
+    .ds-spin-lg { width:36px; height:36px; border-width:3px; border-color:rgba(0,91,65,.2); border-top-color:var(--nice-primary,#005B41); margin:3rem auto; display:block; }
+    @@keyframes ds-rotate { to { transform:rotate(360deg); } }
+
+    .ds-empty { text-align:center; padding:2.5rem 1rem; }
+
+    /* Guide */
+    .ds-guide-list    { margin:.5rem 1rem; padding-left:1.4rem; font-size:.84rem; line-height:1.75; color:#444; }
+    .ds-guide-section { padding:.65rem 1rem; border-top:1px solid #e9ecef; }
+    .ds-guide-title   { font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; color:#777; margin-bottom:.35rem; }
+    .ds-mapping       { display:flex; flex-direction:column; gap:.3rem; font-size:.82rem; color:#555; }
+    .ds-mapping div   { display:flex; align-items:center; gap:.4rem; }
+</style>
+
+@code {
+    // ── Static app list — matches DemoController.Seeds exactly ────────────────
+    private record StaticApp(Guid Id, string Name, string AuthProvider, string ApiKey);
+
+    private static readonly List<StaticApp> _staticApps =
+    [
+        new(new Guid("00000000-0000-0000-0001-000000000001"), "SurveyPortal",    "ANON",  "survey-portal-key"),
+        new(new Guid("00000000-0000-0000-0001-000000000002"), "CustomerSupport", "READI", "customer-support-key"),
+        new(new Guid("00000000-0000-0000-0001-000000000003"), "NicePortal",      "NICE",  "nice-portal-key"),
+    ];
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    private bool            _loading      = true;
+    private bool            _apiReachable = false;
+    private bool            _seeded       = false;
+    private bool            _dbChecked    = false;
+    private bool            _busy         = false;
+    private string          _statusMsg    = string.Empty;
+    private bool            _statusOk     = true;
+    private string          _apiBase      = string.Empty;
+    private StaticApp?      _activeApp;
+    private List<DemoUser>  _agents       = [];
+    private List<DemoUser>  _supervisors  = [];
+    private string          _newAgentName      = string.Empty;
+    private string          _newSupervisorName = string.Empty;
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        _apiBase = Nav.BaseUri.TrimEnd('/');
+
+        // 1. Ping — just check if API is up at all
+        _apiReachable = await Demo.PingAsync();
+        _dbChecked    = true;
+
+        if (_apiReachable)
+        {
+            // 2. Check DB seeded status
+            var status = await Demo.GetStatusAsync();
+            _seeded = status.Seeded;
+
+            if (!status.DbOk)
+            {
+                _statusMsg = "DB not ready: " + status.DbError;
+                _statusOk  = false;
+            }
+        }
+
+        // 3. Always default-select first app so forms are visible immediately
+        _activeApp = _staticApps[0];
+        if (_seeded)
+            await LoadUsersAsync();
+
+        _loading = false;
+    }
+
+    // ── Seed ──────────────────────────────────────────────────────────────────
+    private async Task SeedAsync()
+    {
+        _busy      = true;
+        _statusMsg = string.Empty;
+        StateHasChanged();
+
+        var (ok, msg) = await Demo.SeedAppsAsync();
+        _statusMsg = msg;
+        _statusOk  = ok;
+
+        if (ok)
+        {
+            _seeded = true;
+            await LoadUsersAsync();
+        }
+
+        _busy = false;
+    }
+
+    // ── App tab selection ─────────────────────────────────────────────────────
+    private async Task SelectApp(StaticApp app)
+    {
+        _activeApp         = app;
+        _newAgentName      = string.Empty;
+        _newSupervisorName = string.Empty;
+        _statusMsg         = string.Empty;
+        await LoadUsersAsync();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private static char FirstLetter(string name) =>
+        string.IsNullOrWhiteSpace(name) ? '?' : char.ToUpperInvariant(name[0]);
+
+    private void QuickLogin(DemoUser user, Guid appId)
+    {
+        var app = _staticApps.FirstOrDefault(a => a.Id == appId);
+        if (app is null) return;
+        var url = $"/login?token={Uri.EscapeDataString(user.Token)}&appName={Uri.EscapeDataString(app.Name)}&apiKey={Uri.EscapeDataString(app.ApiKey)}&userType={Uri.EscapeDataString(user.Role)}";
+        Nav.NavigateTo(url);
+    }
+
+    private void QuickLogin(DemoUser user, StaticApp app)
+    {
+        var url = $"/login?token={Uri.EscapeDataString(user.Token)}&appName={Uri.EscapeDataString(app.Name)}&apiKey={Uri.EscapeDataString(app.ApiKey)}&userType={Uri.EscapeDataString(user.Role)}";
+        Nav.NavigateTo(url);
+    }
+
+    private async Task RemoveAsync(DemoUser user)
+    {
+        if (_activeApp is null) return;
+        _busy = true;
+        StateHasChanged();
+        await Demo.RemoveUserAsync(user.Id, _activeApp.Id);
+        await LoadUsersAsync();
+        _busy = false;
+    }
+
+    private async Task AddAgentAsync()
+    {
+        if (_activeApp is null || string.IsNullOrWhiteSpace(_newAgentName)) return;
+        _busy = true;
+        StateHasChanged();
+        var parts = _newAgentName.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var dto = new DemoCreateUserDto
+        {
+            Name          = _newAgentName.Trim(),
+            Role          = "Agent",
+            ApplicationId = _activeApp.Id,
+            Token         = _newAgentName.Trim().ToLowerInvariant().Replace(' ', '-')
+        };
+        await Demo.CreateUserAsync(dto);
+        _newAgentName = string.Empty;
+        await LoadUsersAsync();
+        _busy = false;
+    }
+
+    private async Task AddSupervisorAsync()
+    {
+        if (_activeApp is null || string.IsNullOrWhiteSpace(_newSupervisorName)) return;
+        _busy = true;
+        StateHasChanged();
+        var dto = new DemoCreateUserDto
+        {
+            Name          = _newSupervisorName.Trim(),
+            Role          = "Supervisor",
+            ApplicationId = _activeApp.Id,
+            Token         = _newSupervisorName.Trim().ToLowerInvariant().Replace(' ', '-')
+        };
+        await Demo.CreateUserAsync(dto);
+        _newSupervisorName = string.Empty;
+        await LoadUsersAsync();
+        _busy = false;
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        if (_activeApp is null) return;
+        var users = await Demo.GetUsersAsync(_activeApp.Id);
+        _agents      = users.Where(u => u.Role?.ToLower() == "agent").ToList();
+        _supervisors = users.Where(u => u.Role?.ToLower() == "supervisor").ToList();
+        StateHasChanged();
+    }
+}

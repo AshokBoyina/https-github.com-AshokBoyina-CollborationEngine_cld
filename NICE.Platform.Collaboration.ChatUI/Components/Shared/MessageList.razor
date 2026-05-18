@@ -1,0 +1,20 @@
+@using NICE.Platform.Collaboration.ChatUI.Models
+
+<div class="message-list" id="message-list-@ListId">
+    @foreach (var msg in Messages)
+    {
+        <div class="message @(msg.IsMine ? "mine" : "other") clearfix">
+            <div class="meta">
+                <strong>@msg.SenderName</strong>
+                &nbsp;·&nbsp;
+                <span>@msg.SentAt.ToLocalTime().ToString("HH:mm")</span>
+            </div>
+            <div class="bubble">@msg.Content</div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<ChatMessage> Messages { get; set; } = [];
+    [Parameter] public string ListId { get; set; } = "main";
+}

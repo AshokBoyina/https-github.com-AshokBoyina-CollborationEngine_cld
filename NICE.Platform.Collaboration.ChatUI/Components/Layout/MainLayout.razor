@@ -1,0 +1,41 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject IAuthService Auth
+@inject NavigationManager Nav
+
+<div class="page">
+    <div class="top-bar">
+        <span class="brand">NICE Platform Collaboration</span>
+        @if (Auth.Current.IsAuthenticated)
+        {
+            <span style="display:flex;align-items:center;gap:.75rem">
+                <span>@Auth.Current.DisplayName</span>
+                <span class="user-type-badge">@Auth.Current.UserType</span>
+                <button class="btn btn-sm btn-outline-light" @onclick="Logout">Sign out</button>
+            </span>
+        }
+    </div>
+
+    <div class="main">
+        @if (Auth.Current.IsAuthenticated)
+        {
+            <nav class="sidebar">
+                <NavMenu />
+            </nav>
+        }
+        <main class="content">
+            @Body
+        </main>
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized() => Auth.OnChange += StateHasChanged;
+    public void Dispose()                   => Auth.OnChange -= StateHasChanged;
+
+    private async Task Logout()
+    {
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login", replace: true);
+    }
+}

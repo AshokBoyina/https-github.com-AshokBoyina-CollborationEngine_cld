@@ -1,0 +1,179 @@
+@page "/login"
+@page "/"
+@inject IAuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Sign In — NICE Collaboration</PageTitle>
+
+<div class="login-wrap">
+    <div class="login-card">
+
+        <div class="login-logo">
+            <div class="brand">NICE Platform</div>
+            <div class="sub">Collaboration Console</div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert-error">@_error</div>
+        }
+
+        <div class="form-group">
+            <label class="form-label">Application <span style="font-weight:400;color:var(--nice-text-muted)">(X-Access-Key)</span></label>
+            <select class="form-control form-select" @bind="_applicationName">
+                <option value="SurveyPortal">SurveyPortal — Staff: READI</option>
+                <option value="CustomerSupport">CustomerSupport — Staff: READI</option>
+                <option value="NicePortal">NicePortal — Staff: NICE</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">User Type</label>
+            <select class="form-control form-select" @bind="_userType">
+                <option value="External">External (customer / end user)</option>
+                <option value="Agent">Agent (support agent)</option>
+                <option value="Supervisor">Supervisor</option>
+                <option value="Internal">Internal (staff)</option>
+                <option value="Standalone">Standalone (screen recorder)</option>
+                <option value="StandaloneMonitor">StandaloneMonitor (watch standalone sessions)</option>
+            </select>
+        </div>
+
+        <!-- Auth provider routing badge — updates live with UserType selection -->
+        <div style="display:flex;align-items:center;gap:8px;margin:-4px 0 12px;padding:8px 12px;border-radius:8px;font-size:.78rem;
+                    background:@(_isExternal ? "#f0fdf4" : "#eff6ff");
+                    border:1px solid @(_isExternal ? "#86efac" : "#bfdbfe")">
+            <span style="font-size:1rem">@(_isExternal ? "🔓" : "🔐")</span>
+            <div>
+                @if (_isExternal)
+                {
+                    <span style="font-weight:600;color:#166534">External users always authenticate via <b>Anonymous (ANON)</b></span>
+                    <span style="color:#166534;opacity:.8"> — token is decoded locally, no external provider call.</span>
+                }
+                else
+                {
+                    <span style="font-weight:600;color:#1e40af">Staff authenticate via <b>@StaffProviderLabel</b></span>
+                    <span style="color:#1e40af;opacity:.8"> — provider determined by the selected application (X-Api-Key).</span>
+                }
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">
+                @if (_isExternal)
+                {
+                    <span>Auth Token <span style="font-weight:400;color:var(--nice-text-muted)">— Anonymous JWT</span></span>
+                }
+                else
+                {
+                    <span>Auth Token <span style="font-weight:400;color:var(--nice-text-muted)">— @StaffProviderLabel token</span></span>
+                }
+            </label>
+            <input type="text" class="form-control" @bind="_authToken"
+                   placeholder="@TokenPlaceholder" />
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">API Key <span style="font-weight:400;color:var(--nice-text-muted)">(X-Api-Key — identifies the application)</span></label>
+            <input type="text" class="form-control" @bind="_apiKey"
+                   placeholder="chat-ui-key" />
+        </div>
+
+        <button class="btn-login" @onclick="LoginAsync" disabled="@_loading">
+            @if (_loading)
+            {
+                <span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:middle"></span>
+            }
+            Sign In
+        </button>
+
+        <div class="hint-box" style="margin-top:1rem;margin-bottom:.5rem">
+            <strong>Quick test combinations:</strong>
+            <ul>
+                <li>Any app + <b>External</b> → Anonymous (ANON) auth → External chat widget</li>
+                <li>SurveyPortal + <b>Agent</b> → READI auth → Agent console</li>
+                <li>CustomerSupport + <b>Supervisor</b> → READI auth → Supervisor console</li>
+                <li>NicePortal + <b>Internal</b> → NICE auth → Internal chat</li>
+                <li>Any app + <b>Standalone</b> → Staff auth → Screen recorder (share + record)</li>
+                <li>Any app + <b>StandaloneMonitor</b> → Staff auth → Watch standalone sessions live</li>
+            </ul>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div style="color:#ef4444;font-size:.82rem;text-align:center;margin-top:.5rem">@_error</div>
+        }
+
+    </div>
+</div>
+
+@code {
+    // Field names match the @bind attributes used in the HTML above.
+    string _applicationName = "SurveyPortal";
+    string _userType        = "External";
+    string _authToken       = string.Empty;
+    string _apiKey          = "chat-ui-key";
+    string _error           = string.Empty;
+    bool   _loading         = false;
+
+    bool _isExternal => _userType == "External";
+    bool _isStandalone => _userType is "Standalone" or "StandaloneMonitor";
+
+    string StaffProviderLabel => _applicationName switch
+    {
+        "NicePortal"       => "NICE",
+        "CustomerSupport"  => "READI",
+        _                  => "READI"
+    };
+
+    string TokenPlaceholder => _isExternal
+        ? "alice-smith  (or a real anonymous JWT)"
+        : "Paste your READI / NICE token here";
+
+    async Task LoginAsync()
+    {
+        _error   = string.Empty;
+        _loading = true;
+        StateHasChanged();
+
+        var req = new LoginRequest
+        {
+            ApiKey          = string.IsNullOrWhiteSpace(_apiKey) ? "chat-ui-key" : _apiKey,
+            ApplicationName = _applicationName,
+            UserType        = _userType,
+            AuthToken       = _authToken
+        };
+
+        try
+        {
+            var result = await Auth.LoginAsync(req);
+            if (result.Success)
+            {
+                var dest = _userType switch
+                {
+                    "External"          => "/chat/external",
+                    "Agent"             => "/agent",
+                    "Supervisor"        => "/supervisor",
+                    "Internal"          => "/chat/internal",
+                    "Standalone"        => "/standalone",
+                    "StandaloneMonitor" => "/standalone-monitor",
+                    "StandAlone"        => "/recordings",   // legacy route kept for backward compat
+                    _                   => "/chat/external"
+                };
+                Nav.NavigateTo(dest);
+            }
+            else
+            {
+                _error = result.Error;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Login failed: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

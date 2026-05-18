@@ -1,0 +1,28 @@
+@inject IAuthService Auth
+
+@{
+    var ut = Auth.Current.UserType?.ToLower() ?? "";
+}
+
+<nav>
+    @if (ut == "external")
+    {
+        <NavLink href="/chat/external" Match="NavLinkMatch.Prefix">💬 My Chat</NavLink>
+    }
+    @if (ut == "standalone")
+    {
+        <NavLink href="/supervisor/recording" Match="NavLinkMatch.Prefix">🎬 Recordings</NavLink>
+    }
+    @if (ut == "agent")
+    {
+        <NavLink href="/agent" Match="NavLinkMatch.Prefix">🎧 Dashboard</NavLink>
+    }
+    @if (ut == "supervisor")
+    {
+        <NavLink href="/supervisor" Match="NavLinkMatch.Prefix">👁 Supervisor</NavLink>
+    }
+    @if (ut == "internal")
+    {
+        <NavLink href="/chat/internal" Match="NavLinkMatch.Prefix">🏢 Internal Chat</NavLink>
+    }
+</nav>

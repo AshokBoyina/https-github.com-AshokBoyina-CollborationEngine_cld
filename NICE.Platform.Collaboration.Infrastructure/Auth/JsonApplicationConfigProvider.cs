@@ -19,7 +19,9 @@ using NICE.Platform.Collaboration.Application.Interfaces.Auth;
 /// <code>
 /// "Applications": {
 ///   "SurveyPortal": {
-///     "AuthProvider": "ANON",
+///     // StaffAuthProvider applies to Agent, Supervisor, Internal, StandAlone.
+///     // External users always use ANON — this field is ignored for them.
+///     "StaffAuthProvider": "READI",
 ///     "External":    { "ChatMode": "BotThenHuman", "CanShareScreen": true, "NeedScreenRecording": false },
 ///     "Internal":    { "ChatMode": "TalkWithAvailableAgent", "CanShareScreen": true, "NeedScreenRecording": false },
 ///     "Agent":       { "CanHandOffToOtherAgent": true, "MaxParallelChats": 5 },
@@ -57,9 +59,9 @@ public sealed class JsonApplicationConfigProvider(
 
             match = new ApplicationConfig
             {
-                Name         = appSection.Key,
-                AuthProvider = appSection["AuthProvider"] ?? string.Empty,
-                External     = BindIfPresent<ExternalUserConfig>(appSection, "External"),
+                Name              = appSection.Key,
+                StaffAuthProvider = appSection["StaffAuthProvider"] ?? string.Empty,
+                External          = BindIfPresent<ExternalUserConfig>(appSection, "External"),
                 Internal     = BindIfPresent<InternalUserConfig>(appSection, "Internal"),
                 Agent        = BindIfPresent<AgentConfig>(appSection, "Agent"),
                 Supervisor   = BindIfPresent<SupervisorConfig>(appSection, "Supervisor"),
@@ -77,23 +79,21 @@ public sealed class JsonApplicationConfigProvider(
         else
         {
             logger.LogDebug(
-                "Loaded config for application '{ApplicationName}' (AuthProvider={Provider}).",
-                match.Name, match.AuthProvider);
+                "Loaded config for application '{ApplicationName}' (StaffAuthProvider={Provider}).",
+                match.Name, match.StaffAuthProvider);
         }
 
         return Task.FromResult(match);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
     private static T? BindIfPresent<T>(IConfigurationSection parent, string key)
         where T : class, new()
     {
         var section = parent.GetSection(key);
         if (!section.Exists()) return null;
-
-        var obj = new T();
-        section.Bind(obj);
-        return obj;
+        var result = new T();
+        section.Bind(result);
+        return result;
     }
 }
