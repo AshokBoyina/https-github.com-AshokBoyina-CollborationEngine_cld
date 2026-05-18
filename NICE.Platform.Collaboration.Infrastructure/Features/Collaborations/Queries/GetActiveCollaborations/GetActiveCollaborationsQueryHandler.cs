@@ -14,17 +14,30 @@ public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext d
     {
         var collabs = await db.Collaborations
             .AsNoTracking()
+            .Include(c => c.Participants)
+                .ThenInclude(p => p.User)
             .Where(c => c.ApplicationId == request.ApplicationId && c.EndedAt == null)
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        return collabs.Select(c => new CollaborationResponse
+        return collabs.Select(c =>
         {
-            Id        = c.Id,
-            Status    = c.Status,
-            Type      = c.ChatMode,
-            StartedAt = c.CreatedAt,
-            EndedAt   = c.EndedAt
+            // Find the External (customer) participant to get a display name
+            var customerParticipant = c.Participants
+                .FirstOrDefault(p => p.UserType == "External");
+            var customerName = customerParticipant?.User is { } u
+                ? $"{u.FirstName} {u.LastName}".Trim()
+                : "Customer";
+
+            return new CollaborationResponse
+            {
+                Id           = c.Id,
+                Status       = c.Status,
+                Type         = c.ChatMode,
+                StartedAt    = c.CreatedAt,
+                EndedAt      = c.EndedAt,
+                CustomerName = customerName
+            };
         });
     }
 }

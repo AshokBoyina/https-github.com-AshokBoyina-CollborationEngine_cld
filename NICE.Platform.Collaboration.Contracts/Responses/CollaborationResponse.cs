@@ -6,4 +6,6 @@ public class CollaborationResponse
     public string Type { get; set; } = default!;
     public DateTime StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+    /// <summary>Display name of the External (customer) participant. Empty string if no customer participant recorded yet.</summary>
+    public string CustomerName { get; set; } = "";
 }

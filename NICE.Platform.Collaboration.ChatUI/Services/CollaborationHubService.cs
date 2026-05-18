@@ -109,6 +109,72 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
     }
 
 
+    // ── Outbound hub method calls ──────────────────────────────────────────────
+    // Every method maps 1-to-1 to a public Task method on CollaborationHub.cs.
+    // Method names must match exactly (SignalR is case-sensitive on the server).
+
+    public Task RequestCollaborationAsync(string? preferredAgentId = null)
+        => Invoke("RequestCollaboration", preferredAgentId);
+
+    public Task AcceptCollaborationAsync(string collaborationId)
+        => Invoke("AcceptCollaboration", collaborationId);
+
+    public Task EndCollaborationAsync(string collaborationId, string? reason = null)
+        => Invoke("EndCollaboration", collaborationId, reason ?? "Completed");
+
+    public Task TransferCollaborationAsync(string collaborationId, string toAgentId, string? reason = null)
+        => Invoke("TransferCollaboration", collaborationId, toAgentId, reason ?? "");
+
+    public Task InviteSupervisorAsync(string collaborationId, string supervisorId)
+        => Invoke("InviteSupervisor", collaborationId, supervisorId);
+
+    public Task SendMessageAsync(string collaborationId, string content)
+        => Invoke("SendMessage", collaborationId, content);
+
+    public Task SendWhisperAsync(string collaborationId, string content)
+        => Invoke("SendWhisper", collaborationId, content);
+
+    public Task JoinCollaborationAsync(string collaborationId)
+        => Invoke("JoinCollaborationGroup", collaborationId);
+
+    public Task LeaveCollaborationAsync(string collaborationId)
+        => Invoke("LeaveCollaborationGroup", collaborationId);
+
+    public Task JoinSilentlyAsync(string collaborationId)
+        => Invoke("JoinSilently", collaborationId);
+
+    public Task SupervisorJoinAsync(string collaborationId)
+        => Invoke("SupervisorJoin", collaborationId);
+
+    public Task ShareScreenOfferAsync(string collaborationId, string sdp)
+        => Invoke("ShareScreenOffer", collaborationId, sdp);
+
+    public Task ShareScreenAnswerAsync(string collaborationId, string sdp)
+        => Invoke("ShareScreenAnswer", collaborationId, sdp);
+
+    public Task RequestScreenOfferAsync(string collaborationId)
+        => Invoke("RequestScreenOffer", collaborationId);
+
+    public Task StopScreenShareAsync(string collaborationId)
+        => Invoke("StopScreenShare", collaborationId);
+
+    public Task StartStandaloneSessionAsync()
+        => Invoke("StartStandaloneSession");
+
+    public Task JoinStandaloneSessionAsync(string collaborationId)
+        => Invoke("JoinStandaloneSession", collaborationId);
+
+    public Task GetStandaloneSessionsAsync()
+        => Invoke("GetStandaloneSessions");
+
+    // Safe invoke — swallows "hub not connected" race conditions.
+    private Task Invoke(string method, params object?[] args)
+    {
+        if (_hub is null) return Task.CompletedTask;
+        try   { return _hub.InvokeCoreAsync(method, args); }
+        catch { return Task.CompletedTask; }
+    }
+
     // ── Hub event registration ─────────────────────────────────────────────────
     private void RegisterHandlers()
     {
@@ -341,65 +407,4 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
         });
     }
 
-    // ── Hub invocation helpers ─────────────────────────────────────────────────
-    private Task Invoke(string method, params object?[] args)
-    {
-        if (_hub is null) return Task.CompletedTask;
-        return _hub.InvokeCoreAsync(method, args);
-    }
-
-    public Task RequestCollaborationAsync(string? preferredAgentId = null)
-        => Invoke("RequestCollaboration", preferredAgentId);
-
-    public Task AcceptCollaborationAsync(string collaborationId)
-        => Invoke("AcceptCollaboration", collaborationId);
-
-    public Task EndCollaborationAsync(string collaborationId, string? reason = null)
-        => Invoke("EndCollaboration", collaborationId, reason ?? "Completed");
-
-    public Task TransferCollaborationAsync(string collaborationId, string toAgentId, string? reason = null)
-        => Invoke("TransferCollaboration", collaborationId, toAgentId, reason ?? "");
-
-    public Task InviteSupervisorAsync(string collaborationId, string supervisorId)
-        => Invoke("InviteSupervisor", collaborationId, supervisorId);
-
-    public Task SendMessageAsync(string collaborationId, string content)
-        => Invoke("SendMessage", collaborationId, content);
-
-    public Task SendWhisperAsync(string collaborationId, string content)
-        => Invoke("SendWhisper", collaborationId, content);
-
-    public Task JoinCollaborationAsync(string collaborationId)
-        => Invoke("JoinCollaborationGroup", collaborationId);
-
-    public Task LeaveCollaborationAsync(string collaborationId)
-        => Invoke("LeaveCollaborationGroup", collaborationId);
-
-    public Task SupervisorJoinAsync(string collaborationId)
-        => Invoke("SupervisorJoin", collaborationId);
-
-    public Task JoinSilentlyAsync(string collaborationId)
-        => Invoke("JoinSilently", collaborationId);
-
-    // ── Standalone ─────────────────────────────────────────────────────────
-    public Task StartStandaloneSessionAsync()
-        => Invoke("StartStandaloneSession");
-
-    public Task JoinStandaloneSessionAsync(string collaborationId)
-        => Invoke("JoinStandaloneSession", collaborationId);
-
-    public Task GetStandaloneSessionsAsync()
-        => Invoke("GetStandaloneSessions");
-
-    public Task ShareScreenOfferAsync(string collaborationId, string sdp)
-        => Invoke("ShareScreenOffer", collaborationId, sdp);
-
-    public Task ShareScreenAnswerAsync(string collaborationId, string sdp)
-        => Invoke("ShareScreenAnswer", collaborationId, sdp);
-
-    public Task RequestScreenOfferAsync(string collaborationId)
-        => Invoke("RequestScreenOffer", collaborationId);
-
-    public Task StopScreenShareAsync(string collaborationId)
-        => Invoke("StopScreenShare", collaborationId);
 }

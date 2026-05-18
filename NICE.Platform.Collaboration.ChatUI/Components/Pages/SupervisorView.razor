@@ -382,7 +382,46 @@
             catch (Exception ex) { Console.WriteLine($"Hub connect failed: {ex.Message}"); }
         }
 
-        // Agent list is populated live via OnOnlineUsersUpdated — no DB fetch needed here.
+        // ── Seed sidebar with currently active sessions from the DB ──────────
+        // This covers sessions that started before the supervisor loaded the page,
+        // and guarantees ended sessions (EndedAt != null) are never shown.
+        await LoadActiveCollaborationsFromDbAsync();
+    }
+
+    /// <summary>
+    /// Fetches all non-ended collaborations for this application from the REST API and
+    /// merges them into <see cref="_activeCollabs"/>, avoiding duplicates with any sessions
+    /// that arrived via hub events during the connection window.
+    /// </summary>
+    private async Task LoadActiveCollaborationsFromDbAsync()
+    {
+        var appId = Auth.Current.ApplicationId_Guid;
+        if (appId == Guid.Empty) return;
+
+        try
+        {
+            var activeFromDb = await Demo.GetActiveCollaborationsAsync(appId);
+            foreach (var collab in activeFromDb)
+            {
+                var collabIdStr = collab.Id.ToString();
+                // Skip if already added via hub event during connection
+                if (_activeCollabs.Any(c => c.CollabId == collabIdStr)) continue;
+
+                var customerName = string.IsNullOrWhiteSpace(collab.CustomerName)
+                    ? "Customer"
+                    : collab.CustomerName;
+
+                _activeCollabs.Add(new WatchedCollab(collabIdStr, customerName, collab.StartedAt));
+            }
+
+            // Re-sort: most-recent first (matching the hub event insert order)
+            _activeCollabs = [.. _activeCollabs.OrderByDescending(c => c.StartedAt)];
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SupervisorView] Failed to load active collaborations: {ex.Message}");
+        }
     }
 
     public async ValueTask DisposeAsync()

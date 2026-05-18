@@ -61,11 +61,12 @@ public class WatchedCollab
     public bool              IsJoined        { get; set; }
     public bool              IsScreenSharing { get; set; }
     public bool              HistoryLoaded   { get; set; }
-    public DateTime          StartedAt       { get; } = DateTime.UtcNow;
+    public DateTime          StartedAt       { get; }
 
-    public WatchedCollab(string collabId, string customerName)
+    public WatchedCollab(string collabId, string customerName, DateTime? startedAt = null)
     {
         CollabId     = collabId;
         CustomerName = customerName;
+        StartedAt    = startedAt ?? DateTime.UtcNow;
     }
 }

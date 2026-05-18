@@ -598,6 +598,36 @@ public sealed class CollaborationHub(
             .SendAsync("SupervisorJoined", collabGuid.ToString());
     }
 
+    // ── Messaging ───────────────────────────────────────────────────────────
+
+    /// <summary>Sends a chat message to all participants in a collaboration.</summary>
+    public async Task SendMessage(string collaborationId, string content)
+    {
+        var collabGuid = Guid.Parse(collaborationId);
+
+        var response = await sender.Send(
+            new SendMessageCommand(collabGuid, CurrentUserId, content, null, "Text"));
+
+        // Broadcast to everyone in the collaboration group (customer + agent + supervisor)
+        await Clients
+            .Group(SignalRGroups.Collaboration(collabGuid))
+            .SendAsync("MessageReceived", response);
+    }
+
+    /// <summary>Sends an agent-to-supervisor whisper (internal note invisible to the customer).</summary>
+    public async Task SendWhisper(string collaborationId, string content)
+    {
+        var collabGuid = Guid.Parse(collaborationId);
+
+        var response = await sender.Send(
+            new SendMessageCommand(collabGuid, CurrentUserId, content, null, "Whisper"));
+
+        // Whispers go only to the silent-monitor group (supervisors) — NOT the customer
+        await Clients
+            .Group(SignalRGroups.SilentMonitor(collabGuid))
+            .SendAsync("WhisperMessage", response);
+    }
+
     // ── WebRTC screen-share signaling ────────────────────────────────────────
     // Used by Standalone recorder AND by the Agent screen-share flow.
 

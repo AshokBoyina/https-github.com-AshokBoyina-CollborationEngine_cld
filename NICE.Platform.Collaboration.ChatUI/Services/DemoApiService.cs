@@ -157,6 +157,21 @@ public class DemoApiService(HttpClient http, IAuthService auth) : IDemoApiServic
         catch { return []; }
     }
 
+    // ── Get all non-ended (active) collaborations for an application ───────
+    public async Task<List<ActiveCollaborationDto>> GetActiveCollaborationsAsync(
+        Guid appId, CancellationToken ct = default)
+    {
+        try
+        {
+            var req  = AuthedRequest(HttpMethod.Get,
+                $"api/v1/collaboration/collaborations/active/{appId}");
+            var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode) return [];
+            return await resp.Content.ReadFromJsonAsync<List<ActiveCollaborationDto>>(JsonOpts, ct) ?? [];
+        }
+        catch { return []; }
+    }
+
     // ── JSON helper ────────────────────────────────────────────────────────
     private static string? TryExtract(string json, string key)
     {

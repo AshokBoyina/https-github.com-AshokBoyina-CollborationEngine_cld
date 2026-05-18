@@ -14,4 +14,6 @@ public interface IDemoApiService
     Task<List<CollaborationMessageDto>>  GetCollaborationMessagesAsync(Guid collaborationId, CancellationToken ct = default);
     /// <summary>Returns users currently connected to the hub (non-External only).</summary>
     Task<List<OnlineUserInfo>>           GetOnlineUsersAsync(Guid appId, CancellationToken ct = default);
+    /// <summary>Returns all non-ended collaborations for the application, with customer name resolved from participants.</summary>
+    Task<List<ActiveCollaborationDto>>   GetActiveCollaborationsAsync(Guid appId, CancellationToken ct = default);
 }

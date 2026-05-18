@@ -76,3 +76,16 @@ public class OnlineUserInfo
     public string   UserType    { get; set; } = string.Empty;
     public DateTime ConnectedAt { get; set; }
 }
+
+/// <summary>Active collaboration as returned by GET /api/v1/collaboration/collaborations/active/{appId}</summary>
+public class ActiveCollaborationDto
+{
+    public Guid      Id           { get; set; }
+    /// <summary>Status string — e.g. "Pending", "BotHandling", "AgentHandling".</summary>
+    public string    Status       { get; set; } = string.Empty;
+    public string    Type         { get; set; } = string.Empty;
+    public DateTime  StartedAt    { get; set; }
+    public DateTime? EndedAt      { get; set; }
+    /// <summary>Display name of the customer (External participant). Falls back to "Customer" when not yet set.</summary>
+    public string    CustomerName { get; set; } = string.Empty;
+}
