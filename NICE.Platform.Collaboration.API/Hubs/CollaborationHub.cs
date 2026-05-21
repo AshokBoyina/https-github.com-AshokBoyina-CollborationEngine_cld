@@ -31,6 +31,7 @@ public sealed class CollaborationHub(
     ISender                   sender,
     CollaborationDbContext     db,
     IIceServerProvider        iceProvider,
+    IBotService               botService,
     ILogger<CollaborationHub> logger) : Hub
 {
     // ── Claim helpers ───────────────────────────────────────────────────────
@@ -706,6 +707,32 @@ public sealed class CollaborationHub(
         await Clients
             .Group(SignalRGroups.SilentMonitor(collabGuid))
             .SendAsync("WhisperMessage", response);
+    }
+
+    /// <summary>
+    /// Called by ExternalChat during the bot phase.
+    /// Delegates to the configured IBotService and fires BotReply back ONLY to the caller.
+    ///   UseRealBot = true  → NiceBotApiService makes the real HTTP call and returns the reply.
+    ///   UseRealBot = false → NoOpBotService returns "" → client falls back to local keyword mock.
+    /// apiKey / apiAccessKey are forwarded as X-Api-Key / X-API-Access-Key headers to the bot API.
+    /// </summary>
+    public async Task AskBot(string sessionId, string userMessage, string apiKey, string apiAccessKey)
+    {
+        string reply;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            reply = await botService.SendMessageAsync(sessionId, userMessage, apiKey, apiAccessKey, cts.Token)
+                    ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "AskBot error for session={SessionId}", sessionId);
+            reply = string.Empty;   // empty → client falls back to local mock
+        }
+
+        // Reply goes only to the caller's connection — not broadcast to the collab group
+        await Clients.Caller.SendAsync("BotReply", sessionId, reply);
     }
 
     // ── WebRTC screen-share signaling ────────────────────────────────────────

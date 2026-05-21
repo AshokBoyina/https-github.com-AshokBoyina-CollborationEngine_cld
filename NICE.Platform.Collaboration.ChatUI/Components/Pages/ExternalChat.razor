@@ -228,6 +228,10 @@
     DotNetObjectReference<ExternalChat>? _screenShareRef;
     ElementReference _inputRef;
 
+    // ── Bot session tracking ────────────────────────────────────────────────
+    string _botSessionId  = string.Empty;  // stable ID sent to the bot API per user session
+    string _lastBotQuery  = string.Empty;  // kept so OnBotReply can fallback to local mock
+
     // ── Lifecycle ──────────────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
@@ -237,18 +241,20 @@
             return;
         }
 
-        _firstName = Auth.Current.DisplayName.Split(' ')[0];
+        _firstName    = Auth.Current.DisplayName.Split(' ')[0];
         if (string.IsNullOrWhiteSpace(_firstName)) _firstName = "there";
+        _botSessionId = Auth.Current.UserId;   // stable per-user bot session ID
 
         // Wire hub events
-        Hub.OnCollaborationCreated  += OnCollaborationCreated;
-        Hub.OnCollaborationAccepted += OnCollaborationAccepted;
-        Hub.OnCollaborationEnded    += OnCollaborationEnded;
-        Hub.OnMessageReceived       += OnMessageReceived;
-        Hub.OnConnectionChanged        += OnConnectionChanged;
-        Hub.OnScreenOfferRequested     += OnScreenOfferRequested;
-        Hub.OnForceDisconnected        += OnForceDisconnected;
-        Hub.OnCollaborationTransferred += OnCollaborationTransferredHandler;
+        Hub.OnCollaborationCreated      += OnCollaborationCreated;
+        Hub.OnCollaborationAccepted     += OnCollaborationAccepted;
+        Hub.OnCollaborationEnded        += OnCollaborationEnded;
+        Hub.OnMessageReceived           += OnMessageReceived;
+        Hub.OnConnectionChanged         += OnConnectionChanged;
+        Hub.OnScreenOfferRequested      += OnScreenOfferRequested;
+        Hub.OnForceDisconnected         += OnForceDisconnected;
+        Hub.OnCollaborationTransferred  += OnCollaborationTransferredHandler;
+        Hub.OnBotMessageReceived        += OnBotReply;   // handles BotReply from AskBot hub method
 
         if (Hub.ConnectionState != HubConnectionState.Connected)
         {
@@ -263,15 +269,16 @@
 
     public async ValueTask DisposeAsync()
     {
-        Hub.OnCollaborationCreated  -= OnCollaborationCreated;
-        Hub.OnCollaborationAccepted -= OnCollaborationAccepted;
-        Hub.OnCollaborationEnded    -= OnCollaborationEnded;
-        Hub.OnMessageReceived       -= OnMessageReceived;
-        Hub.OnConnectionChanged        -= OnConnectionChanged;
-        Hub.OnScreenOfferRequested     -= OnScreenOfferRequested;
-        Hub.OnForceDisconnected        -= OnForceDisconnected;
-        Hub.OnCollaborationTransferred -= OnCollaborationTransferredHandler;
-        Hub.OnAnswer                   -= OnScreenShareAnswer;   // safe if not subscribed
+        Hub.OnCollaborationCreated      -= OnCollaborationCreated;
+        Hub.OnCollaborationAccepted     -= OnCollaborationAccepted;
+        Hub.OnCollaborationEnded        -= OnCollaborationEnded;
+        Hub.OnMessageReceived           -= OnMessageReceived;
+        Hub.OnConnectionChanged         -= OnConnectionChanged;
+        Hub.OnScreenOfferRequested      -= OnScreenOfferRequested;
+        Hub.OnForceDisconnected         -= OnForceDisconnected;
+        Hub.OnCollaborationTransferred  -= OnCollaborationTransferredHandler;
+        Hub.OnBotMessageReceived        -= OnBotReply;
+        Hub.OnAnswer                    -= OnScreenShareAnswer;   // safe if not subscribed
 
         if (_screenShareActive)
         {
@@ -368,11 +375,28 @@
             }
             else
             {
-                _botTyping = true;
+                _botTyping    = true;
+                _lastBotQuery = text;
                 StateHasChanged();
-                await Task.Delay(900);
-                _botTyping = false;
-                AddBotMessage(GetBotReply(text));
+
+                // Ask the server bot pipeline.
+                // UseRealBot=true  → NiceBotApiService makes the real HTTP call; BotReply event fires with the answer.
+                // UseRealBot=false → NoOpBotService returns ""; BotReply fires with ""; OnBotReply falls back to local mock.
+                try
+                {
+                    await Hub.AskBotAsync(
+                        _botSessionId,
+                        text,
+                        Auth.Current.BotApiKey,
+                        Auth.Current.BotApiAccessKey);
+                    // _botTyping cleared and message added by OnBotReply when BotReply event arrives
+                }
+                catch
+                {
+                    // Hub error (disconnected etc.) — fall back to local mock immediately
+                    _botTyping = false;
+                    AddBotMessage(GetBotReply(text));
+                }
             }
         }
 
@@ -401,6 +425,25 @@
         if (!_panelOpen) _unread++;
         StateHasChanged();
     }
+
+    // ── Bot reply handler ──────────────────────────────────────────────────
+    /// <summary>
+    /// Fired by the BotReply SignalR event (response to AskBot hub call).
+    /// msg.Content is the real bot reply when UseRealBot=true, or "" when UseRealBot=false.
+    /// Empty reply → falls back to the local keyword-match mock so demo mode is unaffected.
+    /// </summary>
+    Task OnBotReply(ChatMessage msg)
+        => InvokeAsync(async () =>
+        {
+            _botTyping = false;
+            var text   = string.IsNullOrWhiteSpace(msg.Content)
+                ? GetBotReply(_lastBotQuery)   // UseRealBot=false → local mock fallback
+                : msg.Content;                 // UseRealBot=true  → real API answer
+            AddBotMessage(text);
+            StateHasChanged();
+            await ScrollToBottom();
+            try { await _inputRef.FocusAsync(); } catch { }
+        });
 
     // ── Agent request flow ─────────────────────────────────────────────────
     async Task RequestAgent()

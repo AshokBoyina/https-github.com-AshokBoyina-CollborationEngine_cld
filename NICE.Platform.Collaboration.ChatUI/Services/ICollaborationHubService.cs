@@ -65,6 +65,15 @@ public interface ICollaborationHubService
     Task SendMessageAsync(string collaborationId, string content);
     Task SendWhisperAsync(string collaborationId, string content);
 
+    /// <summary>
+    /// Sends a user message to the server bot pipeline.
+    /// The server replies asynchronously via the <c>BotReply</c> SignalR event which
+    /// fires <see cref="OnBotMessageReceived"/> on the client.
+    /// When <c>UseRealBot=false</c> the server returns an empty string so ExternalChat
+    /// falls back to its local keyword-match mock automatically.
+    /// </summary>
+    Task AskBotAsync(string sessionId, string userMessage, string apiKey, string apiAccessKey);
+
     // ── Groups ─────────────────────────────────────────────────────────────
     Task JoinCollaborationAsync(string collaborationId);
     Task LeaveCollaborationAsync(string collaborationId);

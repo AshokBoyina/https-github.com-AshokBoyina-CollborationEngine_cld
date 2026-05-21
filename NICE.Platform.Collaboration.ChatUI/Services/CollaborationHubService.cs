@@ -136,6 +136,9 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
     public Task SendWhisperAsync(string collaborationId, string content)
         => Invoke("SendWhisper", collaborationId, content);
 
+    public Task AskBotAsync(string sessionId, string userMessage, string apiKey, string apiAccessKey)
+        => Invoke("AskBot", sessionId, userMessage, apiKey, apiAccessKey);
+
     public Task JoinCollaborationAsync(string collaborationId)
         => Invoke("JoinCollaborationGroup", collaborationId);
 
@@ -381,6 +384,23 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
 
         _hub.On<string>("BotSuggestsEscalation", collabId =>
             OnBotSuggestsEscalation?.Invoke(collabId) ?? Task.CompletedTask);
+
+        // ── Bot reply (direct, caller-only response to AskBot hub method) ──────
+        // sessionId = the ID passed to AskBotAsync; reply = bot text (empty when UseRealBot=false).
+        // ExternalChat subscribes OnBotMessageReceived and falls back to local mock when reply=="".
+        _hub.On<string, string>("BotReply", (sessionId, reply) =>
+        {
+            var msg = new ChatMessage
+            {
+                CollaborationId = sessionId,
+                SenderId        = "nass-bot",
+                SenderName      = "Nass",
+                Content         = reply,
+                IsBot           = true,
+                SentAt          = DateTime.UtcNow
+            };
+            return OnBotMessageReceived?.Invoke(msg) ?? Task.CompletedTask;
+        });
 
         // ── Standalone session events ──────────────────────────────────────────
         _hub.On<object>("StandaloneSessionStarted", raw =>
