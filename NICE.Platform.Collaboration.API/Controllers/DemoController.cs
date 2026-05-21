@@ -39,9 +39,9 @@ public class DemoController(CollaborationDbContext db, IConfiguration config) : 
             new Guid("00000000-0000-0000-0001-000000000001"),
             "ANON", "survey-portal-key"),
 
-        ["CustomerSupport"] = new(
+        ["Readi"] = new(
             new Guid("00000000-0000-0000-0001-000000000002"),
-            "READI", "customer-support-key"),
+            "READI", "readi-key"),
 
         ["NicePortal"] = new(
             new Guid("00000000-0000-0000-0001-000000000003"),
@@ -343,6 +343,101 @@ public class DemoController(CollaborationDbContext db, IConfiguration config) : 
         return Ok(online);
     }
 
+    // ── POST /api/v1/demo/mint-token ─────────────────────────────────────────
+    /// <summary>
+    /// Mints a LOCAL_JWT token signed with the configured secret.
+    /// Use the returned token as the "Auth Token" in the login screen.
+    ///
+    /// This endpoint is intentionally AllowAnonymous — it is a developer/QA helper
+    /// for generating signed tokens without needing jwt.io or any external tool.
+    /// Remove or guard this endpoint before exposing the API publicly.
+    ///
+    /// Query params:
+    ///   name      — full name, e.g. "Alice Smith"  (required)
+    ///   role      — Agent | Supervisor | Internal | StandAlone | External  (required)
+    ///   sub       — stable user ID; defaults to a slug of the name if omitted
+    ///   email     — email address (optional)
+    ///   expiryMin — token lifetime in minutes, default 480 (8 hours)
+    /// </summary>
+    [HttpPost("mint-token")]
+    public IActionResult MintToken(
+        [FromQuery] string  name,
+        [FromQuery] string  role,
+        [FromQuery] string? sub       = null,
+        [FromQuery] string? email     = null,
+        [FromQuery] int     expiryMin = 480)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return BadRequest(new { error = "name is required (e.g. ?name=Alice+Smith)." });
+
+        if (string.IsNullOrWhiteSpace(role))
+            return BadRequest(new { error = "role is required (Agent | Supervisor | Internal | StandAlone | External)." });
+
+        // Read the LocalJwt secret from configuration
+        var secret = config["AuthValidation:LocalJwt:Secret"];
+        if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32)
+            return StatusCode(500, new
+            {
+                error = "AuthValidation:LocalJwt:Secret is not configured or too short (< 32 chars). " +
+                        "Add it to appsettings.json to use LOCAL_JWT mode."
+            });
+
+        var issuer   = config["AuthValidation:LocalJwt:Issuer"]   ?? "NICE.Collaboration.Local";
+        var audience = config["AuthValidation:LocalJwt:Audience"] ?? "NICE.Collaboration.Api";
+
+        var nameParts  = name.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var firstName  = nameParts[0];
+        var lastName   = nameParts.Length > 1 ? nameParts[1] : string.Empty;
+
+        // Stable subject: slug of name if not provided
+        var subject = !string.IsNullOrWhiteSpace(sub)
+            ? sub.Trim()
+            : name.Trim().ToLowerInvariant().Replace(" ", "-").Replace("'", "");
+
+        var now    = DateTime.UtcNow;
+        var expiry = now.AddMinutes(expiryMin);
+
+        // Note: JwtSecurityToken automatically adds iat/nbf/exp from notBefore/expires — no need to add iat manually.
+        var claims = new List<System.Security.Claims.Claim>
+        {
+            new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub,        subject),
+            new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti,        Guid.NewGuid().ToString()),
+            new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.GivenName,  firstName),
+            new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.FamilyName, lastName),
+        };
+
+        if (!string.IsNullOrWhiteSpace(email))
+            claims.Add(new(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Email, email));
+
+        var key   = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                        System.Text.Encoding.UTF8.GetBytes(secret));
+        var creds = new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                        key, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256);
+
+        var jwt = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
+            issuer:             issuer,
+            audience:           audience,
+            claims:             claims,
+            notBefore:          now,
+            expires:            expiry,
+            signingCredentials: creds);
+
+        var tokenString = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(jwt);
+
+        return Ok(new
+        {
+            token     = tokenString,
+            subject,
+            firstName,
+            lastName,
+            role,
+            email,
+            issuedAt  = now,
+            expiresAt = expiry,
+            usage     = $"Paste `token` into the login screen Auth Token field with role={role}."
+        });
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────
     // ── POST /api/v1/demo/recordings/upload ──────────────────────────────────
     /// <summary>
@@ -388,6 +483,80 @@ public class DemoController(CollaborationDbContext db, IConfiguration config) : 
             sizeBytes = file.Length,
             savedAt   = DateTime.UtcNow
         });
+    }
+
+    // ── POST /api/v1/demo/cleanup-stale-sessions ─────────────────────────────
+    /// <summary>
+    /// Marks all never-ended collaborations as Abandoned.
+    /// These accumulate when sessions terminate abruptly (server restart, browser tab closed, etc.)
+    /// without going through the normal EndCollaboration hub/API flow.
+    ///
+    /// <paramref name="olderThanHours"/>: when 0 (default) ALL stuck sessions are cleaned.
+    /// Pass a positive value to restrict to sessions older than that many hours.
+    ///
+    /// Called by the Supervisor dashboard "Clean up stale sessions" button.
+    /// </summary>
+    [HttpPost("cleanup-stale-sessions")]
+    public async Task<IActionResult> CleanupStaleSessions(
+        [FromQuery] int olderThanHours = 0,
+        CancellationToken ct = default)
+    {
+        // olderThanHours == 0 → clean ALL stuck sessions regardless of age.
+        // olderThanHours  > 0 → restrict to sessions created before the cutoff.
+        List<Collaboration> stale;
+
+        if (olderThanHours > 0)
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-olderThanHours);
+            stale = await db.Collaborations
+                .Where(c => c.EndedAt == null && c.CreatedAt < cutoff)
+                .ToListAsync(ct);
+        }
+        else
+        {
+            // olderThanHours == 0: wipe every session that was never formally ended.
+            stale = await db.Collaborations
+                .Where(c => c.EndedAt == null)
+                .ToListAsync(ct);
+        }
+
+        if (stale.Count == 0)
+            return Ok(new { cleaned = 0, message = "No stale sessions found." });
+
+        var now = DateTime.UtcNow;
+        foreach (var c in stale)
+        {
+            c.EndedAt = now;
+            c.Status  = "Abandoned";
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Ok(new { cleaned = stale.Count, message = $"Marked {stale.Count} session(s) as Abandoned." });
+    }
+
+    // ── GET /api/v1/demo/sessions-debug ──────────────────────────────────────
+    /// <summary>
+    /// Returns all collaborations for the given app with their Status, EndedAt, and CreatedAt.
+    /// Use this to diagnose why sessions appear in the supervisor sidebar.
+    /// </summary>
+    [HttpGet("sessions-debug/{appId:guid}")]
+    public async Task<IActionResult> SessionsDebug(Guid appId, CancellationToken ct)
+    {
+        var rows = await db.Collaborations
+            .AsNoTracking()
+            .Where(c => c.ApplicationId == appId)
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.Status,
+                EndedAt   = c.EndedAt.HasValue ? c.EndedAt.Value.ToString("o") : (string?)null,
+                CreatedAt = c.CreatedAt.ToString("o"),
+                Age       = (int)(DateTime.UtcNow - c.CreatedAt).TotalMinutes + " min ago"
+            })
+            .ToListAsync(ct);
+
+        return Ok(rows);
     }
 
     private record SeedApp(Guid Id, string AuthProvider, string ApiKey);

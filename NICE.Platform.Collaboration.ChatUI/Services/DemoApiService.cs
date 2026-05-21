@@ -23,9 +23,11 @@ public class DemoApiService(HttpClient http, IAuthService auth) : IDemoApiServic
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
         // ApiKeyMiddleware requires X-Api-Key on all non-demo routes.
-        // Phase 1 stub accepts any non-empty value; use a fixed demo placeholder
-        // until the client stores the real key from the login flow.
-        req.Headers.TryAddWithoutValidation("X-Api-Key", "demo-internal");
+        // Use the real key captured at login; fall back to a stub for unauthenticated callers
+        // such as DemoSetup (which runs before login).
+        var apiKey = auth.Current.BotApiKey;
+        req.Headers.TryAddWithoutValidation("X-Api-Key",
+            string.IsNullOrWhiteSpace(apiKey) ? "demo-internal" : apiKey);
         return req;
     }
 
@@ -145,14 +147,24 @@ public class DemoApiService(HttpClient http, IAuthService auth) : IDemoApiServic
     }
 
     // ── Get currently online (hub-connected) non-External users ───────────
+    // Calls the production endpoint (requires auth Bearer token).
+    // Falls back to the demo endpoint if the production call fails, so DemoSetup
+    // (which runs unauthenticated) still works.
     public async Task<List<OnlineUserInfo>> GetOnlineUsersAsync(
         Guid appId, CancellationToken ct = default)
     {
         try
         {
-            var resp = await http.GetAsync($"api/v1/demo/online-users/{appId}", ct);
-            if (!resp.IsSuccessStatusCode) return [];
-            return await resp.Content.ReadFromJsonAsync<List<OnlineUserInfo>>(JsonOpts, ct) ?? [];
+            var req  = AuthedRequest(HttpMethod.Get,
+                $"api/v1/collaboration/users/{appId}/online");
+            var resp = await http.SendAsync(req, ct);
+            if (resp.IsSuccessStatusCode)
+                return await resp.Content.ReadFromJsonAsync<List<OnlineUserInfo>>(JsonOpts, ct) ?? [];
+
+            // Fallback: demo endpoint (for unauthenticated callers such as DemoSetup)
+            var demoResp = await http.GetAsync($"api/v1/demo/online-users/{appId}", ct);
+            if (!demoResp.IsSuccessStatusCode) return [];
+            return await demoResp.Content.ReadFromJsonAsync<List<OnlineUserInfo>>(JsonOpts, ct) ?? [];
         }
         catch { return []; }
     }
@@ -170,6 +182,23 @@ public class DemoApiService(HttpClient http, IAuthService auth) : IDemoApiServic
             return await resp.Content.ReadFromJsonAsync<List<ActiveCollaborationDto>>(JsonOpts, ct) ?? [];
         }
         catch { return []; }
+    }
+
+    // ── Cleanup stale sessions ────────────────────────────────────────────
+    public async Task<(int Cleaned, string Message)> CleanupStaleSessionsAsync(
+        int olderThanHours = 0, CancellationToken ct = default)
+    {
+        try
+        {
+            var resp = await http.PostAsync(
+                $"api/v1/demo/cleanup-stale-sessions?olderThanHours={olderThanHours}", null, ct);
+            if (!resp.IsSuccessStatusCode) return (0, $"HTTP {(int)resp.StatusCode}");
+            var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(JsonOpts, ct);
+            var cleaned = doc.TryGetProperty("cleaned", out var c) ? c.GetInt32() : 0;
+            var message = doc.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
+            return (cleaned, message);
+        }
+        catch (Exception ex) { return (0, ex.Message); }
     }
 
     // ── JSON helper ────────────────────────────────────────────────────────

@@ -4,6 +4,11 @@ namespace NICE.Platform.Collaboration.Infrastructure.Bot;
 /// Configuration for the real bot API endpoint.
 /// Bound from the "BotApi" section in appsettings.json.
 /// Only active when FeatureFlags:UseRealBot = true.
+///
+/// Note: ApiKey and ApiAccessKey are NOT stored here — they are captured from the
+/// user's login form and passed per-call via <see cref="IBotService"/> method parameters.
+/// This keeps credentials out of appsettings and allows different callers to supply
+/// their own keys without restarting the server.
 /// </summary>
 public class BotApiOptions
 {
@@ -14,12 +19,6 @@ public class BotApiOptions
 
     /// <summary>Path appended to BaseUrl for the chat endpoint, e.g. "/v1/AI/Bot/chat".</summary>
     public string ChatPath { get; set; } = "/v1/AI/Bot/chat";
-
-    /// <summary>Sent as X-Api-Key header on every request.</summary>
-    public string ApiKey { get; set; } = string.Empty;
-
-    /// <summary>Sent as X-API-Access-Key header on every request.</summary>
-    public string ApiAccessKey { get; set; } = string.Empty;
 
     /// <summary>HTTP request timeout in seconds. Defaults to 30.</summary>
     public int TimeoutSeconds { get; set; } = 30;

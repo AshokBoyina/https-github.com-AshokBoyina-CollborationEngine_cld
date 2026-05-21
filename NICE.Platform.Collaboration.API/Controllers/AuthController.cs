@@ -20,7 +20,7 @@ using NICE.Platform.Collaboration.Infrastructure.Persistence;
 /// Required headers:
 ///   X-Api-Key    — the registered application's secret API key.
 ///                  Identifies the application and determines the staff auth provider.
-///   X-Access-Key — the Application Name (e.g. "SurveyPortal", "CustomerSupport").
+///   X-Access-Key — the Application Name (e.g. "SurveyPortal", "Readi").
 ///                  Used to load the application config.
 ///   AuthToken    — the token to validate (format depends on auth provider selected).
 ///   UserType     — External | Internal | Agent | Supervisor | StandAlone
@@ -105,14 +105,14 @@ public class AuthController(
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, Fail(
                     $"Application '{applicationName}' has no StaffAuthProvider configured. " +
-                    "Add a StaffAuthProvider (READI | NICE | ANON) to the application config."));
+                    "Add a StaffAuthProvider (READI | NICE | ANON | LOCAL_JWT) to the application config."));
             }
 
             if (!Enum.TryParse<AuthProvider>(appConfig.StaffAuthProvider, ignoreCase: true, out provider))
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, Fail(
                     $"Application '{applicationName}' has an invalid StaffAuthProvider " +
-                    $"'{appConfig.StaffAuthProvider}'. Accepted values: READI, NICE, ANON."));
+                    $"'{appConfig.StaffAuthProvider}'. Accepted values: READI, NICE, ANON, LOCAL_JWT."));
             }
         }
 
@@ -127,7 +127,7 @@ public class AuthController(
         //    The ExternalUserId is the raw token in mock mode (demo users are
         //    pre-created via DemoController so the token is already their slug).
         var (dbUserId, dbAppId) = await UpsertUserAsync(
-            externalUserId: result.UserId ?? authToken,
+            externalUserId: result.UserId ?? authToken ?? Guid.NewGuid().ToString(),
             firstName:      result.FirstName ?? string.Empty,
             lastName:       result.LastName  ?? string.Empty,
             email:          result.Email,

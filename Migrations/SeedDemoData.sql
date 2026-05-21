@@ -31,7 +31,7 @@ GO
 --
 -- Login screen drop-down ↔ API key mapping:
 --   "SurveyPortal"    → X-Api-Key: survey-portal-key
---   "CustomerSupport" → X-Api-Key: customer-support-key
+--   "Readi"           → X-Api-Key: readi-key
 --   "NicePortal"      → X-Api-Key: nice-portal-key
 --
 -- Note: HashedApiKey stores the plain-text key here because the demo pipeline
@@ -43,7 +43,7 @@ GO
 -- ├───────────────────┼──────────────────┼────────────────────┼──────────────────────┤
 -- │ alice-smith       │ SurveyPortal     │ External           │ survey-portal-key    │
 -- │ agent-sarah       │ SurveyPortal     │ Agent              │ survey-portal-key    │
--- │ supervisor-james  │ CustomerSupport  │ Supervisor         │ customer-support-key │
+-- │ supervisor-james  │ Readi            │ Supervisor         │ readi-key            │
 -- │ internal-kate     │ NicePortal       │ Internal           │ nice-portal-key      │
 -- │ standalone-tom    │ SurveyPortal     │ Standalone         │ survey-portal-key    │
 -- │ monitor-jane      │ SurveyPortal     │ StandaloneMonitor  │ survey-portal-key    │
@@ -75,7 +75,7 @@ ELSE
     PRINT '  [=] Application: SurveyPortal — already exists, skipped.';
 GO
 
--- ── CustomerSupport ───────────────────────────────────────────────────────────
+-- ── Readi ─────────────────────────────────────────────────────────────────────
 IF NOT EXISTS (
     SELECT 1 FROM [Collaboration].[Applications]
     WHERE  Id = '00000000-0000-0000-0001-000000000002'
@@ -87,16 +87,16 @@ BEGIN
          WebhookUrl, IsActive, CreatedAt)
     VALUES
         ('00000000-0000-0000-0001-000000000002',
-         'CustomerSupport',
-         'customer-support-key',
+         'Readi',
+         'readi-key',
          'READI',
-         20, 200, 'customersupport',
+         20, 200, 'readi',
          NULL, 1, GETUTCDATE());
 
-    PRINT '  [+] Application: CustomerSupport';
+    PRINT '  [+] Application: Readi';
 END
 ELSE
-    PRINT '  [=] Application: CustomerSupport — already exists, skipped.';
+    PRINT '  [=] Application: Readi — already exists, skipped.';
 GO
 
 -- ── NicePortal ────────────────────────────────────────────────────────────────

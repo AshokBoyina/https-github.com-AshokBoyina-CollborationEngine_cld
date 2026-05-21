@@ -12,11 +12,18 @@ public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext d
     public async Task<IEnumerable<CollaborationResponse>> Handle(
         GetActiveCollaborationsQuery request, CancellationToken cancellationToken)
     {
+        // Sessions older than 24 h with no EndedAt are abandoned (server restart, tab close, etc.).
+        // Exclude them from the active list so the supervisor dashboard stays clean.
+        var staleCutoff = DateTime.UtcNow.AddHours(-24);
+
         var collabs = await db.Collaborations
             .AsNoTracking()
             .Include(c => c.Participants)
                 .ThenInclude(p => p.User)
-            .Where(c => c.ApplicationId == request.ApplicationId && c.EndedAt == null)
+            .Where(c => c.ApplicationId == request.ApplicationId
+                     && c.EndedAt == null          // not formally ended
+                     && c.Status == "Active"        // both customer + agent are connected
+                     && c.CreatedAt >= staleCutoff) // exclude sessions older than 24 h with no EndedAt
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(cancellationToken);
 

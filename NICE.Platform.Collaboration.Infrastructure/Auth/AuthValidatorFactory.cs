@@ -14,9 +14,10 @@ public sealed class AuthValidatorFactory(IServiceProvider serviceProvider) : IAu
     public IAuthValidator GetValidator(AuthProvider provider) =>
         provider switch
         {
-            AuthProvider.READI => serviceProvider.GetRequiredService<ReadiAuthValidator>(),
-            AuthProvider.NICE  => serviceProvider.GetRequiredService<NiceAuthValidator>(),
-            AuthProvider.ANON  => serviceProvider.GetRequiredService<AnonymousAuthValidator>(),
+            AuthProvider.READI     => serviceProvider.GetRequiredService<ReadiAuthValidator>(),
+            AuthProvider.NICE      => serviceProvider.GetRequiredService<NiceAuthValidator>(),
+            AuthProvider.ANON      => serviceProvider.GetRequiredService<AnonymousAuthValidator>(),
+            AuthProvider.LOCAL_JWT => serviceProvider.GetRequiredService<LocalJwtAuthValidator>(),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(provider),
                 $"No validator is registered for auth provider '{provider}'.")

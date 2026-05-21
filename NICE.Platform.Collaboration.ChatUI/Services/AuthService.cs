@@ -64,12 +64,16 @@ public class AuthService(HttpClient http, IJSRuntime js) : IAuthService
 
             _current = new UserSession
             {
-                Token           = sessionToken,
-                UserId          = userId,
-                DisplayName     = $"{firstName} {lastName}".Trim(),
-                UserType        = userType,
-                ApplicationId   = applicationId,
-                ApplicationName = applicationName
+                Token            = sessionToken,
+                UserId           = userId,
+                DisplayName      = $"{firstName} {lastName}".Trim(),
+                UserType         = userType,
+                ApplicationId    = applicationId,
+                ApplicationName  = applicationName,
+                // Bot API credentials come from the login form, not from appsettings.
+                // X-Api-Key → BotApiKey; X-Access-Key (ApplicationName) → BotApiAccessKey.
+                BotApiKey        = request.BotApiKey,
+                BotApiAccessKey  = request.BotApiAccessKey
             };
 
             // Persist full session so a browser refresh can restore it without re-login
@@ -114,10 +118,11 @@ public class AuthService(HttpClient http, IJSRuntime js) : IAuthService
     {
         try
         {
-            var saved = await js.InvokeAsync<string?>("chatStorage.get", "session");
+            // chatStorage.loadSession() reads from localStorage key 'nice_session'
+            var saved = await js.InvokeAsync<string?>("chatStorage.loadSession");
             if (!string.IsNullOrEmpty(saved))
             {
-                var restored = System.Text.Json.JsonSerializer.Deserialize<UserSession>(saved);
+                var restored = System.Text.Json.JsonSerializer.Deserialize<UserSession>(saved, JsonOpts);
                 if (restored is not null && !string.IsNullOrEmpty(restored.Token))
                 {
                     _current = restored;

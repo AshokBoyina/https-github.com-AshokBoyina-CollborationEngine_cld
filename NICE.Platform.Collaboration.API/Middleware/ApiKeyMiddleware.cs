@@ -31,10 +31,11 @@ public class ApiKeyMiddleware(RequestDelegate next, ILogger<ApiKeyMiddleware> lo
     {
         // ── Skip list ─────────────────────────────────────────────────────────
         var path = context.Request.Path;
-        if (path.StartsWithSegments("/swagger")                       ||
-            path.StartsWithSegments("/api/v1/collaboration/auth")     ||
-            path.StartsWithSegments("/api/v1/demo")                   ||  // demo/setup — no key needed
-            path.StartsWithSegments("/hubs")                          ||
+        if (path.StartsWithSegments("/swagger")                           ||
+            path.StartsWithSegments("/api/v1/collaboration/auth")         ||
+            path.StartsWithSegments("/api/v1/collaboration/recordings")   ||  // bearer-protected; browser can't easily add X-Api-Key
+            path.StartsWithSegments("/api/v1/demo")                       ||  // demo/setup — no key needed
+            path.StartsWithSegments("/hubs")                              ||
             path.StartsWithSegments("/health"))
         {
             await next(context);

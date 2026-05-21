@@ -9,7 +9,7 @@ namespace NICE.Platform.Collaboration.Contracts.Requests;
 ///                  Identifies the application and, together with X-Access-Key, determines
 ///                  which StaffAuthProvider (READI | NICE | ANON) is used for non-External users.
 ///
-///   X-Access-Key — the Application Name (e.g. "SurveyPortal", "CustomerSupport").
+///   X-Access-Key — the Application Name (e.g. "SurveyPortal", "Readi").
 ///                  Used to load the application's full configuration from the store.
 ///                  The calling client never selects the auth provider directly.
 ///

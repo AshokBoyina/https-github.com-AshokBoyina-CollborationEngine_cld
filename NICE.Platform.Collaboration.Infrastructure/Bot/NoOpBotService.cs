@@ -11,19 +11,23 @@ using NICE.Platform.Collaboration.Application.Interfaces.Services;
 /// without throwing <see cref="NotImplementedException"/> at runtime.
 ///
 /// To switch to the real bot, set <c>FeatureFlags:UseRealBot = true</c> in
-/// appsettings and ensure <c>NiceBotApi:BaseUrl</c> + <c>NiceBotApi:ApiKey</c>
-/// are configured. <see cref="NiceBotApiService"/> will be registered instead.
+/// appsettings and supply BotApi:BaseUrl. API credentials are supplied per-call
+/// from the user's session (not from appsettings). <see cref="NiceBotApiService"/>
+/// will be registered instead.
 /// </summary>
 public sealed class NoOpBotService : IBotService
 {
     public Task<string> SendMessageAsync(
-        string sessionId, string userMessage, CancellationToken ct)
+        string sessionId, string userMessage,
+        string apiKey, string apiAccessKey,
+        CancellationToken ct)
         => Task.FromResult(string.Empty);   // no bot reply — client handles it
 
     public Task<bool> ShouldEscalateToAgentAsync(
-        string sessionId, CancellationToken ct)
+        string sessionId, string apiKey, string apiAccessKey, CancellationToken ct)
         => Task.FromResult(false);          // escalation decided client-side
 
-    public Task EndSessionAsync(string sessionId, CancellationToken ct)
+    public Task EndSessionAsync(
+        string sessionId, string apiKey, string apiAccessKey, CancellationToken ct)
         => Task.CompletedTask;
 }

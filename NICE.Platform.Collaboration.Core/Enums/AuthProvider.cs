@@ -13,5 +13,14 @@ public enum AuthProvider
     NICE,
 
     /// <summary>Anonymous — engine decodes JWT internally, validates SurveyId / FirstName / LastName claims.</summary>
-    ANON
+    ANON,
+
+    /// <summary>
+    /// Local signed JWT — engine verifies HMAC-SHA256 signature against a shared secret
+    /// stored in <c>appsettings.json → AuthValidation:LocalJwt:Secret</c>.
+    /// No external HTTP call is made. Suitable for staging / integration testing
+    /// when READI / NICE identity providers are not yet available.
+    /// Tokens are self-minted (jwt.io, Postman, or <c>POST /api/v1/demo/mint-token</c>).
+    /// </summary>
+    LOCAL_JWT
 }

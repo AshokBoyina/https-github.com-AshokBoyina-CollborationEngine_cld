@@ -19,12 +19,9 @@
         }
 
         <div class="form-group">
-            <label class="form-label">Application <span style="font-weight:400;color:var(--nice-text-muted)">(X-Access-Key)</span></label>
-            <select class="form-control form-select" @bind="_applicationName">
-                <option value="SurveyPortal">SurveyPortal — Staff: READI</option>
-                <option value="CustomerSupport">CustomerSupport — Staff: READI</option>
-                <option value="NicePortal">NicePortal — Staff: NICE</option>
-            </select>
+            <label class="form-label">Application <span style="font-weight:400;color:var(--nice-text-muted)">(X-Access-Key — e.g. SurveyPortal)</span></label>
+            <input type="text" class="form-control" @bind="_applicationName"
+                   placeholder="SurveyPortal" />
         </div>
 
         <div class="form-group">
@@ -52,8 +49,8 @@
                 }
                 else
                 {
-                    <span style="font-weight:600;color:#1e40af">Staff authenticate via <b>@StaffProviderLabel</b></span>
-                    <span style="color:#1e40af;opacity:.8"> — provider determined by the selected application (X-Api-Key).</span>
+                    <span style="font-weight:600;color:#1e40af">Staff authenticate via <b>LOCAL_JWT</b></span>
+                    <span style="color:#1e40af;opacity:.8"> — HMAC-signed token verified server-side. Mint via POST /api/v1/demo/mint-token.</span>
                 }
             </div>
         </div>
@@ -66,7 +63,7 @@
                 }
                 else
                 {
-                    <span>Auth Token <span style="font-weight:400;color:var(--nice-text-muted)">— @StaffProviderLabel token</span></span>
+                    <span>Auth Token <span style="font-weight:400;color:var(--nice-text-muted)">— LOCAL_JWT token</span></span>
                 }
             </label>
             <input type="text" class="form-control" @bind="_authToken"
@@ -74,7 +71,7 @@
         </div>
 
         <div class="form-group">
-            <label class="form-label">API Key <span style="font-weight:400;color:var(--nice-text-muted)">(X-Api-Key — identifies the application)</span></label>
+            <label class="form-label">API Key <span style="font-weight:400;color:var(--nice-text-muted)">(X-Api-Key — also used as Bot API key)</span></label>
             <input type="text" class="form-control" @bind="_apiKey"
                    placeholder="chat-ui-key" />
         </div>
@@ -88,14 +85,15 @@
         </button>
 
         <div class="hint-box" style="margin-top:1rem;margin-bottom:.5rem">
-            <strong>Quick test combinations:</strong>
+            <strong>Quick test combinations (LOCAL_JWT mode):</strong>
             <ul>
-                <li>Any app + <b>External</b> → Anonymous (ANON) auth → External chat widget</li>
-                <li>SurveyPortal + <b>Agent</b> → READI auth → Agent console</li>
-                <li>CustomerSupport + <b>Supervisor</b> → READI auth → Supervisor console</li>
-                <li>NicePortal + <b>Internal</b> → NICE auth → Internal chat</li>
-                <li>Any app + <b>Standalone</b> → Staff auth → Screen recorder (share + record)</li>
-                <li>Any app + <b>StandaloneMonitor</b> → Staff auth → Watch standalone sessions live</li>
+                <li>Any app + <b>External</b> → ANON auth → External chat widget (enter any name, e.g. <code>Troy M</code> or <code>Alice Smith</code>)</li>
+                <li>Any app + <b>Agent</b> → LOCAL_JWT → Agent console (mint token via <code>POST /api/v1/demo/mint-token?name=Alice+Smith&amp;role=Agent</code>)</li>
+                <li>Any app + <b>Supervisor</b> → LOCAL_JWT → Supervisor console</li>
+                <li>Any app + <b>Internal</b> → LOCAL_JWT → Internal chat</li>
+                <li>Any app + <b>Standalone</b> → LOCAL_JWT → Screen recorder (share + record)</li>
+                <li>Any app + <b>StandaloneMonitor</b> → LOCAL_JWT → Watch standalone sessions live</li>
+                <li><b>X-Api-Key</b> and <b>X-Access-Key</b> values are also forwarded as Bot API credentials.</li>
             </ul>
         </div>
 
@@ -116,19 +114,12 @@
     string _error           = string.Empty;
     bool   _loading         = false;
 
-    bool _isExternal => _userType == "External";
+    bool _isExternal  => _userType == "External";
     bool _isStandalone => _userType is "Standalone" or "StandaloneMonitor";
 
-    string StaffProviderLabel => _applicationName switch
-    {
-        "NicePortal"       => "NICE",
-        "CustomerSupport"  => "READI",
-        _                  => "READI"
-    };
-
     string TokenPlaceholder => _isExternal
-        ? "alice-smith  (or a real anonymous JWT)"
-        : "Paste your READI / NICE token here";
+        ? "e.g. Troy M  or  Alice Smith  or  alice-smith  (or a full anonymous JWT)"
+        : "Paste your LOCAL_JWT token here (mint via /api/v1/demo/mint-token)";
 
     async Task LoginAsync()
     {
@@ -136,12 +127,18 @@
         _loading = true;
         StateHasChanged();
 
+        var apiKey = string.IsNullOrWhiteSpace(_apiKey) ? "chat-ui-key" : _apiKey;
+        var appName = string.IsNullOrWhiteSpace(_applicationName) ? "SurveyPortal" : _applicationName;
+
         var req = new LoginRequest
         {
-            ApiKey          = string.IsNullOrWhiteSpace(_apiKey) ? "chat-ui-key" : _apiKey,
-            ApplicationName = _applicationName,
-            UserType        = _userType,
-            AuthToken       = _authToken
+            ApiKey           = apiKey,
+            ApplicationName  = appName,
+            UserType         = _userType,
+            AuthToken        = _authToken,
+            // X-Api-Key doubles as the Bot API key; X-Access-Key doubles as Bot API access key
+            BotApiKey        = apiKey,
+            BotApiAccessKey  = appName
         };
 
         try

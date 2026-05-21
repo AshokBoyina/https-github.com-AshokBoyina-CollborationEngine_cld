@@ -10,6 +10,14 @@ public class UserSession
     /// <summary>External | Internal | Agent | Supervisor | Standalone</summary>
     public string UserType          { get; set; } = string.Empty;
 
+    // ── Bot API credentials (captured at login, not from appsettings) ──────────
+
+    /// <summary>X-Api-Key forwarded to the real Bot API on every call (empty = no bot auth).</summary>
+    public string BotApiKey         { get; set; } = string.Empty;
+
+    /// <summary>X-API-Access-Key forwarded to the real Bot API on every call.</summary>
+    public string BotApiAccessKey   { get; set; } = string.Empty;
+
     // Parsed helpers
     public Guid   UserId_Guid       => Guid.TryParse(UserId, out var g) ? g : Guid.Empty;
     public Guid   ApplicationId_Guid => Guid.TryParse(ApplicationId, out var g) ? g : Guid.Empty;

@@ -431,10 +431,13 @@
     {
         if (string.IsNullOrEmpty(_collabId)) return;
 
-        // Stop screen share if active
+        // Stop screen share if active — broadcast ScreenShareStopped BEFORE ending
+        // the collab so the agent/supervisor can finalize and upload any recording
+        // before the collaboration-ended event triggers session cleanup.
         if (_screenShareActive)
         {
             try { await JS.InvokeVoidAsync("screenShare.stop"); } catch { }
+            try { await Hub.StopScreenShareAsync(_collabId); } catch { }
             _screenShareActive = false;
             _screenShareRef?.Dispose();
             _screenShareRef = null;

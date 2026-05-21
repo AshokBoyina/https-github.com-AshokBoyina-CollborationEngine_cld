@@ -355,6 +355,80 @@
             👁 Supervisor has joined this session
         </div>
     }
+
+    <!-- ── Internal DM: incoming request popup ───────────────── -->
+    <!-- Deliberately on the LEFT so it never covers the customer-incoming popup (right side) -->
+    @if (_showInternalIncoming)
+    {
+        <div style="position:fixed;bottom:24px;left:24px;z-index:400;background:#fff;border:1.5px solid #06b6d4;border-radius:var(--radius-lg);padding:1.25rem;width:300px;box-shadow:0 12px 40px rgba(6,182,212,.2);animation:cw-in .28s cubic-bezier(.34,1.56,.64,1)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <div class="nc-item-av" style="width:38px;height:38px;background:#06b6d4">@Initials(_internalIncomingName)</div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem">Internal chat request</div>
+                    <div style="font-size:.75rem;color:var(--nice-text-muted)">
+                        <span style="display:inline-block;padding:1px 6px;border-radius:10px;font-size:.65rem;font-weight:600;background:#ecfeff;color:#0891b2;margin-right:4px">@_internalIncomingUserType</span>
+                        @_internalIncomingName wants to chat
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn--primary" style="flex:1;background:#06b6d4;border-color:#06b6d4" @onclick="AcceptInternalChat">Accept</button>
+                <button class="btn btn--danger"  style="flex:1" @onclick="DeclineInternalChat">Decline</button>
+            </div>
+        </div>
+    }
+
+    <!-- ── Internal DM: active chat panels (floating, stacked bottom-right) ─ -->
+    @foreach (var dm in _internalChats)
+    {
+        var offsetBottom = 24 + _internalChats.IndexOf(dm) * 320;
+        <div style="position:fixed;bottom:@(offsetBottom)px;right:24px;z-index:299;width:300px;background:#fff;
+                    border:1.5px solid #06b6d4;border-radius:var(--radius-lg);
+                    box-shadow:0 8px 32px rgba(6,182,212,.18);display:flex;flex-direction:column;max-height:360px">
+            <!-- Panel header -->
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e0f7fa;background:#ecfeff;border-radius:var(--radius-lg) var(--radius-lg) 0 0">
+                <div class="nc-item-av" style="width:28px;height:28px;font-size:.7rem;background:#06b6d4;flex-shrink:0">@Initials(dm.PeerName)</div>
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@dm.PeerName</div>
+                    <div style="font-size:.65rem;color:#0891b2;font-weight:600">@dm.PeerUserType · Internal chat</div>
+                </div>
+                <button style="background:none;border:none;cursor:pointer;color:#64748b;font-size:.9rem;padding:2px 6px"
+                        title="End chat" @onclick="() => EndInternalChat(dm.CollabId)">✕</button>
+            </div>
+            <!-- Messages -->
+            <div id="idm-scroll-@dm.CollabId"
+                 style="flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:6px;min-height:140px">
+                @if (dm.Messages.Count == 0)
+                {
+                    <div style="text-align:center;color:var(--nice-text-muted);font-size:.75rem;margin-top:16px">Say hi 👋</div>
+                }
+                @foreach (var m in dm.Messages)
+                {
+                    var own = m.SenderId == Auth.Current.UserId;
+                    <div style="display:flex;justify-content:@(own ? "flex-end" : "flex-start")">
+                        <div style="max-width:75%;padding:6px 10px;border-radius:@(own ? "12px 12px 2px 12px" : "12px 12px 12px 2px");
+                                    background:@(own ? "#06b6d4" : "#f1f5f9");
+                                    color:@(own ? "#fff" : "var(--nice-text)");font-size:.8rem;word-break:break-word">
+                            @m.Content
+                        </div>
+                    </div>
+                }
+            </div>
+            <!-- Input -->
+            <div style="display:flex;gap:6px;padding:8px 10px;border-top:1px solid #e2e8f0">
+                <input style="flex:1;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;font-size:.8rem;outline:none"
+                       placeholder="Type a message…"
+                       @bind="dm.Draft"
+                       @bind:event="oninput"
+                       @onkeydown="e => OnInternalDmKey(e, dm)" />
+                <button style="background:#06b6d4;color:#fff;border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:.8rem"
+                        @onclick="() => SendInternalDm(dm)"
+                        disabled="@string.IsNullOrWhiteSpace(dm.Draft)">
+                    <svg width="13" height="13" viewBox="0 0 20 20" fill="none"><path d="M2 10l16-8-8 16V11L2 10z" fill="white"/></svg>
+                </button>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -404,6 +478,13 @@
     bool _showSupToast = false;
     System.Threading.Timer? _toastTimer;
 
+    // ── Internal direct chats (separate from customer sessions) ──
+    List<InternalDmSession> _internalChats        = new();
+    bool   _showInternalIncoming    = false;
+    string _internalIncomingCollabId  = "";
+    string _internalIncomingName      = "";
+    string _internalIncomingUserType  = "";
+
     // ── Lifecycle ──────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
@@ -428,6 +509,7 @@
         Hub.OnForceDisconnected        += OnForceDisconnected;
         Hub.OnChatHistory              += OnChatHistoryReceived;
         Hub.OnOnlineUsersUpdated       += OnOnlineUsersUpdated;
+        Hub.OnInternalDirectChatReceived += OnInternalDirectChatReceived;
 
         if (Hub.ConnectionState != HubConnectionState.Connected)
         {
@@ -454,8 +536,9 @@
         Hub.OnCollaborationTransferred -= OnCollaborationTransferred;
         Hub.OnTransferReceived         -= OnTransferReceived;
         Hub.OnForceDisconnected        -= OnForceDisconnected;
-        Hub.OnChatHistory              -= OnChatHistoryReceived;
-        Hub.OnOnlineUsersUpdated       -= OnOnlineUsersUpdated;
+        Hub.OnChatHistory                -= OnChatHistoryReceived;
+        Hub.OnOnlineUsersUpdated         -= OnOnlineUsersUpdated;
+        Hub.OnInternalDirectChatReceived -= OnInternalDirectChatReceived;
         _countdownTimer?.Dispose();
         _toastTimer?.Dispose();
 
@@ -534,13 +617,19 @@
     {
         await InvokeAsync(async () =>
         {
+            // Close an internal DM if the other side ended it
+            var dm = _internalChats.FirstOrDefault(x => x.CollabId == collabId);
+            if (dm != null) { _internalChats.Remove(dm); StateHasChanged(); return; }
+
             var s = _sessions.FirstOrDefault(x => x.CollabId == collabId);
             if (s != null)
             {
                 _sessions.Remove(s);
-                // Release the WebRTC PC and stored stream for this session
-                if (s.IsScreenSharing)
-                    try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+                // Always call stopView — it is idempotent and calls _stopDemoRecording()
+                // internally, which finalises and uploads any active recording.
+                // Do NOT gate on IsScreenSharing: that flag can be out-of-sync when the
+                // collab ends while a share is still live (e.g. customer ended from their end).
+                try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
             }
 
             // Clear any pending screen-share state for this collab
@@ -557,10 +646,21 @@
     {
         await InvokeAsync(async () =>
         {
+            if (msg.SenderId == Auth.Current.UserId) return; // skip own echo
+
+            // Check if this belongs to an internal DM first
+            var dm = _internalChats.FirstOrDefault(x => x.CollabId == msg.CollaborationId);
+            if (dm != null)
+            {
+                dm.Messages.Add(msg);
+                StateHasChanged();
+                try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", $"idm-scroll-{dm.CollabId}"); } catch { }
+                return;
+            }
+
+            // Otherwise route to customer sessions
             var s = _sessions.FirstOrDefault(x => x.CollabId == msg.CollaborationId);
             if (s == null) return;
-            // Skip echo of messages the agent already added optimistically in SendReply()
-            if (msg.SenderId == Auth.Current.UserId) return;
             s.Messages.Add(msg);
             StateHasChanged();
             if (_selectedId == s.CollabId)
@@ -724,7 +824,8 @@
                 var videoId         = $"agent-screen-video-{collabId}";
                 var enableRecording = Config.GetValue<bool>("ClientFeatures:EnableRecording", false);
                 var apiBase         = (Config["ApiBaseUrl"] ?? "https://localhost:65167/").TrimEnd('/') + "/";
-                var uploadUrl       = $"{apiBase}api/v1/demo/recordings/upload";
+                // Production endpoint (authenticated): POST /api/v1/collaboration/recordings/upload
+                var uploadUrl       = $"{apiBase}api/v1/collaboration/recordings/upload";
 
                 Console.WriteLine($"[Agent] receiveOffer collab={collabId[..Math.Min(8, collabId.Length)]} rec={enableRecording}");
 
@@ -732,7 +833,9 @@
                 {
                     uploadUrl,
                     enableRecording,
-                    collaborationId = collabId
+                    collaborationId = collabId,
+                    token           = Auth.Current.Token,      // Bearer token for the [Authorize] upload endpoint
+                    apiKey          = Auth.Current.BotApiKey   // X-Api-Key for the ApiKeyMiddleware
                 });
 
                 var answerSdp = await JS.InvokeAsync<string>(
@@ -851,8 +954,13 @@
     async Task EndSession()
     {
         if (_selected == null) return;
-        var collabId   = _selected.CollabId;
-        var wasSharing = _selected.IsScreenSharing;
+        var collabId = _selected.CollabId;
+
+        // Stop recording FIRST — before removing the session from the UI — so the
+        // <video> element is still in the DOM when MediaRecorder.onstop fires and
+        // the REC badge can be removed cleanly.  stopView() is idempotent: it only
+        // closes the viewer PeerConnection for this collab and calls _stopDemoRecording().
+        try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
 
         // Clear any buffered screen-share state for this session
         _pendingOffers.Remove(collabId);
@@ -862,10 +970,6 @@
         _sessions.Remove(_selected);
         _selectedId = null;
         StateHasChanged();
-
-        // Release the WebRTC peer connection for this session before ending
-        if (wasSharing)
-            try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
 
         try { await Hub.EndCollaborationAsync(collabId); } catch { }
     }
@@ -945,8 +1049,8 @@
             if (s != null)
             {
                 _sessions.Remove(s);
-                if (s.IsScreenSharing)
-                    try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
+                // Always stop — idempotent; calls _stopDemoRecording() to finalise recording
+                try { await JS.InvokeVoidAsync("screenShare.stopView", collabId); } catch { }
             }
             _pendingOffers.Remove(collabId);
             if (_pendingOfferCollabId   == collabId) { _pendingOfferCollabId = null; _pendingOfferSdp = null; }
@@ -1006,6 +1110,71 @@
         });
     }
 
+    // ── Internal DM handlers ───────────────────────────────────────────────
+
+    Task OnInternalDirectChatReceived(string collabId, string senderName, string senderUserType)
+        => InvokeAsync(() =>
+        {
+            _internalIncomingCollabId  = collabId;
+            _internalIncomingName      = senderName;
+            _internalIncomingUserType  = senderUserType;
+            _showInternalIncoming      = true;
+            StateHasChanged();
+        });
+
+    async Task AcceptInternalChat()
+    {
+        _showInternalIncoming = false;
+        var collabId = _internalIncomingCollabId;
+        var dm = new InternalDmSession(collabId, _internalIncomingName, _internalIncomingUserType);
+        _internalChats.Insert(0, dm);
+        StateHasChanged();
+
+        try { await Hub.JoinCollaborationAsync(collabId); } catch { }
+        try { await Hub.AcceptCollaborationAsync(collabId); } catch { }
+    }
+
+    async Task DeclineInternalChat()
+    {
+        _showInternalIncoming = false;
+        StateHasChanged();
+        try { await Hub.EndCollaborationAsync(_internalIncomingCollabId); } catch { }
+    }
+
+    async Task EndInternalChat(string collabId)
+    {
+        var dm = _internalChats.FirstOrDefault(x => x.CollabId == collabId);
+        if (dm != null) _internalChats.Remove(dm);
+        StateHasChanged();
+        try { await Hub.EndCollaborationAsync(collabId); } catch { }
+        try { await Hub.LeaveCollaborationAsync(collabId); } catch { }
+    }
+
+    async Task SendInternalDm(InternalDmSession dm)
+    {
+        var text = dm.Draft.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return;
+        dm.Draft = "";
+
+        dm.Messages.Add(new ChatMessage
+        {
+            CollaborationId = dm.CollabId,
+            SenderId        = Auth.Current.UserId,
+            SenderName      = Auth.Current.DisplayName,
+            Content         = text,
+            IsMine          = true,
+            SentAt          = DateTime.UtcNow
+        });
+        StateHasChanged();
+        try { await Hub.SendMessageAsync(dm.CollabId, text); } catch { }
+        try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", $"idm-scroll-{dm.CollabId}"); } catch { }
+    }
+
+    async Task OnInternalDmKey(KeyboardEventArgs e, InternalDmSession dm)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendInternalDm(dm);
+    }
+
     void StartCountdown()
     {
         _countdownTimer?.Dispose();
@@ -1026,5 +1195,24 @@
                 }
             });
         }, null, 1000, 1000);
+    }
+
+    // ── InternalDmSession ─────────────────────────────────────────────────────
+    /// <summary>Tracks a single active internal direct-message session on the agent/supervisor side.</summary>
+    sealed class InternalDmSession
+    {
+        public string            CollabId     { get; }
+        public string            PeerName     { get; }
+        public string            PeerUserType { get; }
+        public DateTime          StartedAt    { get; } = DateTime.UtcNow;
+        public List<ChatMessage> Messages     { get; } = new();
+        public string            Draft        { get; set; } = string.Empty;
+
+        public InternalDmSession(string collabId, string peerName, string peerUserType)
+        {
+            CollabId     = collabId;
+            PeerName     = peerName;
+            PeerUserType = peerUserType;
+        }
     }
 }

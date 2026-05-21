@@ -8,6 +8,7 @@ using NICE.Platform.Collaboration.Application.Features.Users.Commands.OnboardUse
 using NICE.Platform.Collaboration.Application.Features.Users.Commands.SetAgentAvailability;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableAgents;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableSupervisors;
+using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetOnlineUsers;
 using NICE.Platform.Collaboration.Contracts.Requests;
 
 [Authorize]
@@ -53,6 +54,19 @@ public class UsersController(ISender sender) : ControllerBase
     public async Task<IActionResult> GetAvailableSupervisors(Guid applicationId, CancellationToken ct)
     {
         var result = await sender.Send(new GetAvailableSupervisorsQuery(applicationId), ct);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Returns all non-External users (Agents, Supervisors, Internal staff) currently connected
+    /// to the SignalR hub for the given application.
+    /// Backed by CurrentSessions — a row exists only while the hub connection is live.
+    /// Used by InternalChat and any page that needs the staff-online directory on load.
+    /// </summary>
+    [HttpGet("{applicationId:guid}/online")]
+    public async Task<IActionResult> GetOnlineUsers(Guid applicationId, CancellationToken ct)
+    {
+        var result = await sender.Send(new GetOnlineUsersQuery(applicationId), ct);
         return Ok(result);
     }
 

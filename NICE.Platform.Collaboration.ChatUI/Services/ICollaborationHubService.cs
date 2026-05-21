@@ -10,6 +10,12 @@ public interface ICollaborationHubService
     event Func<string, string, Task>?                           OnCollaborationCreated;
     event Func<string, string, string, Task>?                   OnNewCollaborationRequest;
     event Func<string, string, string, Task>?                   OnCollaborationAccepted;
+    /// <summary>
+    /// Fired when an agent accepts a collaboration — session is now ACTIVE (both parties connected).
+    /// Args: (collabId, customerName, agentName).
+    /// Intended for supervisor pages that only show sessions once both sides are live.
+    /// </summary>
+    event Func<string, string, string, Task>?                   OnSessionActivated;
     event Func<string, Task>?                                   OnCollaborationRequestTaken;
     event Func<string, Task>?                                   OnCollaborationEnded;
     event Func<ChatMessage, Task>?                              OnMessageReceived;
@@ -26,6 +32,11 @@ public interface ICollaborationHubService
     event Action?                                               OnConnectionChanged;
     event Func<string, string, string, Task>?                   OnCollaborationTransferred;
     event Func<string, string, string, Task>?                   OnTransferReceived;
+    /// <summary>
+    /// Fired when an Internal staff member sends a direct chat request to THIS user specifically.
+    /// Args: (collabId, senderName, senderUserType). Only the targeted user receives this.
+    /// </summary>
+    event Func<string, string, string, Task>?                   OnInternalDirectChatReceived;
     event Action<string>?                                       OnForceDisconnected;
     event Func<List<ActiveChannelInfo>, Task>?                  OnInternalChannelsUpdated;
     event Func<List<OnlineUserInfo>, Task>?                     OnOnlineUsersUpdated;

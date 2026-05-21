@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StartRecording;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StopRecording;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Queries.GetRecordingsByCollaboration;
@@ -145,6 +146,60 @@ public class RecordingsController(
                                         FileShare.ReadWrite, 65536, true);
         Response.Headers.Append("Accept-Ranges", "bytes");
         return File(fileStream, "video/webm", enableRangeProcessing: true);
+    }
+
+    // ── Browser-side WebRTC recording upload ─────────────────────────────────
+
+    /// <summary>
+    /// Receives a completed WebM recording blob from the agent/supervisor browser
+    /// and saves it to the configured local recordings path.
+    ///
+    /// This is the production equivalent of POST /api/v1/demo/recordings/upload.
+    /// It requires an authenticated Bearer token (unlike the demo endpoint).
+    ///
+    /// The JS <c>screenShare.configure()</c> in chat.js passes this URL when
+    /// <c>EnableRecording</c> is true. AgentDashboard and SupervisorView both use
+    /// this endpoint for browser-captured WebRTC recordings.
+    ///
+    /// Body: multipart/form-data  { file: WebM blob, collaborationId: string }
+    /// </summary>
+    [HttpPost("upload")]
+    [RequestSizeLimit(500 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 500 * 1024 * 1024)]
+    public async Task<IActionResult> UploadRecording(
+        IFormFile file,
+        [FromForm] string? collaborationId,
+        [FromServices] IConfiguration config,
+        CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(new { error = "No file received." });
+
+        var recordingsRoot = config["LocalStorage:RecordingsPath"]
+                             ?? Path.Combine(AppContext.BaseDirectory, "Recordings");
+        var dateFolder = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var saveDir    = Path.Combine(recordingsRoot, dateFolder);
+        Directory.CreateDirectory(saveDir);
+
+        var collabPart = !string.IsNullOrEmpty(collaborationId) && collaborationId.Length >= 8
+            ? collaborationId[..8]
+            : "rec";
+        var timestamp = DateTime.UtcNow.ToString("HHmmss");
+        var ext       = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (string.IsNullOrEmpty(ext)) ext = ".webm";
+        var fileName  = $"recording-{collabPart}-{timestamp}{ext}";
+        var fullPath  = Path.Combine(saveDir, fileName);
+
+        await using var stream = System.IO.File.Create(fullPath);
+        await file.CopyToAsync(stream, ct);
+
+        return Ok(new
+        {
+            fileName,
+            path      = fullPath,
+            sizeBytes = file.Length,
+            savedAt   = DateTime.UtcNow
+        });
     }
 
     // ── List live recordings by application (for supervisor initial load) ────

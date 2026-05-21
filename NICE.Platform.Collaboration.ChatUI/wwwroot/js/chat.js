@@ -276,8 +276,8 @@ window.screenShare = (() => {
     // so the object always exists before Blazor has a chance to call configure().
     if (!window.screenShareConfig) window.screenShareConfig = {};
 
-    /** Configure upload target and feature flags from Blazor.
-     *  @param {object} opts  { uploadUrl, enableRecording, collaborationId } */
+    /** Configure upload target, feature flags, and auth credentials from Blazor.
+     *  @param {object} opts  { uploadUrl, enableRecording, collaborationId, token, apiKey } */
     function configure(opts) {
         window.screenShareConfig = Object.assign(window.screenShareConfig || {}, opts);
     }
@@ -356,8 +356,10 @@ window.screenShare = (() => {
             const chunks = [];
             // Snapshot the upload config NOW so it is captured in the closure even if
             // window.screenShareConfig is mutated (or cleared) before onstop fires.
-            const uploadUrl = window.screenShareConfig?.uploadUrl   || '';
-            const collabId  = window.screenShareConfig?.collaborationId || '';
+            const uploadUrl = window.screenShareConfig?.uploadUrl        || '';
+            const collabId  = window.screenShareConfig?.collaborationId  || '';
+            const token     = window.screenShareConfig?.token            || '';
+            const apiKey    = window.screenShareConfig?.apiKey           || '';
 
             _recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
 
@@ -387,12 +389,18 @@ window.screenShare = (() => {
                 // Remove REC badge
                 recBadge?.remove();
 
+                console.info('[screenShare] onstop fired — chunks:', chunks.length,
+                             'uploadUrl:', uploadUrl ? uploadUrl.slice(-40) : '(none)',
+                             'token:', token ? '(present)' : '(MISSING)',
+                             'apiKey:', apiKey ? '(present)' : '(MISSING)');
+
                 if (chunks.length === 0) {
-                    console.warn('[screenShare] Recording stopped with no data.');
+                    console.warn('[screenShare] Recording stopped with no data — nothing to upload.');
                     return;
                 }
 
                 const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
+                console.info('[screenShare] Blob ready:', blob.size, 'bytes');
 
                 if (uploadUrl) {
                     // ── Auto-save to API server ────────────────────────────
@@ -403,14 +411,20 @@ window.screenShare = (() => {
                         form.append('file', blob, `recording-${ts}.webm`);
                         if (collabId) form.append('collaborationId', collabId);
 
-                        const res = await fetch(uploadUrl, { method: 'POST', body: form });
+                        // Include the Bearer token and app key so the upload endpoint accepts the request.
+                        const headers = {};
+                        if (token)  headers['Authorization'] = `Bearer ${token}`;
+                        if (apiKey) headers['X-Api-Key']     = apiKey;
+
+                        const res = await fetch(uploadUrl, { method: 'POST', body: form, headers });
                         if (res.ok) {
                             const data = await res.json();
                             _showRecordingToast(`✓ Saved: ${data.fileName}`, false);
-                            console.info('[screenShare] Recording saved to server:', data.path);
+                            console.info('[screenShare] Recording saved to server:', data.path, data);
                         } else {
-                            console.warn('[screenShare] Upload failed, status:', res.status);
-                            _showRecordingToast('Upload failed — downloading locally', true);
+                            const body = await res.text().catch(() => '');
+                            console.warn('[screenShare] Upload failed, status:', res.status, body);
+                            _showRecordingToast(`Upload failed (${res.status}) — downloading locally`, true);
                             _triggerDownload(blob, mimeType, videoElementId);
                         }
                     } catch (err) {
@@ -433,13 +447,15 @@ window.screenShare = (() => {
     }
 
     function _stopDemoRecording() {
-        if (_recorder && _recorder.state !== 'inactive') {
-            _recorder.stop();
-            // Do NOT set _recorder = null here — the onstop handler fires asynchronously
-            // and needs _recorder state to be stable.  It is cleared at the start of the
-            // next _startDemoRecording call to avoid double-stop on restart.
+        const r = _recorder;
+        _recorder = null;   // Clear reference immediately so a concurrent call cannot double-stop.
+                            // The onstop handler is already closure-bound and does NOT reference
+                            // _recorder, so nulling here is safe regardless of when onstop fires.
+        if (r && r.state !== 'inactive') {
+            r.stop();       // Triggers final ondataavailable flush, then onstop → upload.
         }
-        _recorder = null;
+        // If r.state was already 'inactive' (auto-stopped when stream tracks ended),
+        // onstop has already been queued by the browser — upload will fire on its own.
     }
 
     /* ── External user: apply the answer SDP from a viewer ─────

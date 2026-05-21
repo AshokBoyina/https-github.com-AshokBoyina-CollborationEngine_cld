@@ -38,8 +38,19 @@ public sealed class NiceAuthValidator : IAuthValidator
             if (!mock.IsValid)
                 return AuthValidatorResult.Fail(mock.Error ?? "Mock NICE validation failed.");
 
-            var userId        = string.IsNullOrWhiteSpace(authToken) ? mock.UserId : authToken;
-            var (first, last) = AnonymousAuthValidator.ParseDemoName(authToken, mock.FirstName, mock.LastName);
+            // Resolve a safe userId — never store a raw JWT blob or JSON string in ExternalUserId.
+            // Priority: slug token (e.g. "alice-smith") → configured mock.UserId.
+            string userId;
+            if (string.IsNullOrWhiteSpace(authToken))
+                userId = mock.UserId;
+            else if (authToken.Length <= 80 &&
+                     System.Text.RegularExpressions.Regex.IsMatch(
+                         authToken, @"^[A-Za-z0-9]([A-Za-z0-9\-]*[A-Za-z0-9])?$"))
+                userId = authToken;          // safe slug — "alice-smith" etc.
+            else
+                userId = mock.UserId;        // JWT / JSON blob / garbage → ignore
+
+            var (first, last) = AnonymousAuthValidator.ParseDemoName(userId, mock.FirstName, mock.LastName);
             return AuthValidatorResult.Ok(userId, mock.Email, first, last);
         }
 

@@ -31,8 +31,8 @@ public class NiceBotApiService(
     /// <summary>
     /// Sends <paramref name="userMessage"/> to the bot API and returns the reply text.
     /// Headers sent:
-    ///   X-Api-Key        → BotApi:ApiKey
-    ///   X-API-Access-Key → BotApi:ApiAccessKey
+    ///   X-Api-Key        → <paramref name="apiKey"/> (captured from login form, not appsettings)
+    ///   X-API-Access-Key → <paramref name="apiAccessKey"/>
     /// Body:
     ///   { "sessionId": "...", "message": "..." }
     /// Expected response (flexible — any of the shapes below are accepted):
@@ -43,7 +43,9 @@ public class NiceBotApiService(
     ///   plain string                  ← fallback
     /// </summary>
     public async Task<string> SendMessageAsync(
-        string sessionId, string userMessage, CancellationToken ct)
+        string sessionId, string userMessage,
+        string apiKey, string apiAccessKey,
+        CancellationToken ct)
     {
         var o   = opts.Value;
         var url = $"{o.BaseUrl.TrimEnd('/')}{o.ChatPath}";
@@ -59,11 +61,11 @@ public class NiceBotApiService(
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };
 
-        if (!string.IsNullOrWhiteSpace(o.ApiKey))
-            req.Headers.Add("X-Api-Key", o.ApiKey);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            req.Headers.Add("X-Api-Key", apiKey);
 
-        if (!string.IsNullOrWhiteSpace(o.ApiAccessKey))
-            req.Headers.Add("X-API-Access-Key", o.ApiAccessKey);
+        if (!string.IsNullOrWhiteSpace(apiAccessKey))
+            req.Headers.Add("X-API-Access-Key", apiAccessKey);
 
         logger.LogDebug("BotApi → POST {Url} session={SessionId}", url, sessionId);
 
@@ -95,7 +97,8 @@ public class NiceBotApiService(
     /// Expects: { "shouldEscalate": true/false }
     /// Falls back to false on any error so the existing mock logic in ExternalChat is unaffected.
     /// </summary>
-    public async Task<bool> ShouldEscalateToAgentAsync(string sessionId, CancellationToken ct)
+    public async Task<bool> ShouldEscalateToAgentAsync(
+        string sessionId, string apiKey, string apiAccessKey, CancellationToken ct)
     {
         var o   = opts.Value;
         var url = $"{o.BaseUrl.TrimEnd('/')}{o.ChatPath}";
@@ -107,11 +110,11 @@ public class NiceBotApiService(
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };
 
-        if (!string.IsNullOrWhiteSpace(o.ApiKey))
-            req.Headers.Add("X-Api-Key", o.ApiKey);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            req.Headers.Add("X-Api-Key", apiKey);
 
-        if (!string.IsNullOrWhiteSpace(o.ApiAccessKey))
-            req.Headers.Add("X-API-Access-Key", o.ApiAccessKey);
+        if (!string.IsNullOrWhiteSpace(apiAccessKey))
+            req.Headers.Add("X-API-Access-Key", apiAccessKey);
 
         try
         {
@@ -135,7 +138,8 @@ public class NiceBotApiService(
     }
 
     /// <summary>Notifies the bot API that the session has ended (best-effort).</summary>
-    public async Task EndSessionAsync(string sessionId, CancellationToken ct)
+    public async Task EndSessionAsync(
+        string sessionId, string apiKey, string apiAccessKey, CancellationToken ct)
     {
         var o   = opts.Value;
         var url = $"{o.BaseUrl.TrimEnd('/')}{o.ChatPath}";
@@ -147,11 +151,11 @@ public class NiceBotApiService(
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };
 
-        if (!string.IsNullOrWhiteSpace(o.ApiKey))
-            req.Headers.Add("X-Api-Key", o.ApiKey);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            req.Headers.Add("X-Api-Key", apiKey);
 
-        if (!string.IsNullOrWhiteSpace(o.ApiAccessKey))
-            req.Headers.Add("X-API-Access-Key", o.ApiAccessKey);
+        if (!string.IsNullOrWhiteSpace(apiAccessKey))
+            req.Headers.Add("X-API-Access-Key", apiAccessKey);
 
         try   { await http.SendAsync(req, ct); }
         catch { /* best-effort */ }

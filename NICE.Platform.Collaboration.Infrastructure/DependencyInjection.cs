@@ -46,6 +46,7 @@ public static class DependencyInjection
         services.AddHttpClient<ReadiAuthValidator>();
         services.AddHttpClient<NiceAuthValidator>();
         services.AddSingleton<AnonymousAuthValidator>();
+        services.AddSingleton<LocalJwtAuthValidator>();   // LOCAL_JWT — no HTTP client needed
         services.AddSingleton<IAuthValidatorFactory, AuthValidatorFactory>();
 
         // ── Application config provider (JSON mock → SQL in Phase 2) ──────────

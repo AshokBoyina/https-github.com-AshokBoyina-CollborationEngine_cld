@@ -10,7 +10,7 @@ public class LoginRequest
 
     /// <summary>
     /// X-Access-Key header — the registered Application Name.
-    /// Determines the AuthProvider: SurveyPortal=ANON, CustomerSupport=READI, NicePortal=NICE.
+    /// Determines the AuthProvider: SurveyPortal=ANON, Readi=READI, NicePortal=NICE.
     /// </summary>
     public string ApplicationName { get; set; } = "SurveyPortal";
 
@@ -19,6 +19,20 @@ public class LoginRequest
 
     /// <summary>UserType header — External | Internal | Agent | Supervisor | StandAlone.</summary>
     public string UserType        { get; set; } = "External";
+
+    // ── Bot API credentials (populated from the login form, not from appsettings) ──
+
+    /// <summary>
+    /// Sent as X-Api-Key on every real bot API call.
+    /// Derived from the X-Api-Key field on the login form (same value used for auth).
+    /// </summary>
+    public string BotApiKey       { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Sent as X-API-Access-Key on every real bot API call.
+    /// Derived from the X-Access-Key / ApplicationName field on the login form.
+    /// </summary>
+    public string BotApiAccessKey { get; set; } = string.Empty;
 }
 
 public class LoginResponse
@@ -30,3 +44,4 @@ public class LoginResponse
     public string DisplayName { get; set; } = string.Empty;
     public string UserType    { get; set; } = string.Empty;
 }
+

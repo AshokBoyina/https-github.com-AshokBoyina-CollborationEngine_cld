@@ -14,7 +14,7 @@ public class CollaborationUserConfiguration : IEntityTypeConfiguration<Collabora
 
         b.Property(e => e.ExternalUserId)
             .IsRequired()
-            .HasMaxLength(256);
+            .HasMaxLength(450);   // 450 = max indexable nvarchar on SQL Server; covers JWTs & opaque IDs
 
         b.HasIndex(e => e.ExternalUserId)
             .IsUnique();

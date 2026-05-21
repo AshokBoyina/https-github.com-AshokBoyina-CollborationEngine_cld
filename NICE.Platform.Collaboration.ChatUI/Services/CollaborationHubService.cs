@@ -30,6 +30,7 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
     public event Func<string, string, Task>?         OnCollaborationCreated;
     public event Func<string, string, string, Task>? OnNewCollaborationRequest;
     public event Func<string, string, string, Task>? OnCollaborationAccepted;
+    public event Func<string, string, string, Task>? OnSessionActivated;
     public event Func<string, Task>?                 OnCollaborationRequestTaken;
     public event Func<string, Task>?                 OnCollaborationEnded;
     public event Func<ChatMessage, Task>?            OnMessageReceived;
@@ -48,6 +49,7 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
     public event Action?                                OnConnectionChanged;
     public event Func<string, string, string, Task>?    OnCollaborationTransferred;
     public event Func<string, string, string, Task>?    OnTransferReceived;
+    public event Func<string, string, string, Task>?    OnInternalDirectChatReceived;
     public event Action<string>?                        OnForceDisconnected;
     public event Func<List<ActiveChannelInfo>, Task>?   OnInternalChannelsUpdated;
     public event Func<List<OnlineUserInfo>, Task>?       OnOnlineUsersUpdated;
@@ -210,6 +212,16 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
             return OnCollaborationAccepted?.Invoke(collabId, status, agentName) ?? Task.CompletedTask;
         });
 
+        _hub.On<object>("SessionActivated", raw =>
+        {
+            var j            = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+                System.Text.Json.JsonSerializer.Serialize(raw), JsonOpts);
+            var collabId     = j.TryGetProperty("collaborationId", out var p1) ? p1.GetString() ?? "" : "";
+            var customerName = j.TryGetProperty("customerName",    out var p2) ? p2.GetString() ?? "" : "";
+            var agentName    = j.TryGetProperty("agentName",       out var p3) ? p3.GetString() ?? "" : "";
+            return OnSessionActivated?.Invoke(collabId, customerName, agentName) ?? Task.CompletedTask;
+        });
+
         _hub.On<string>("CollaborationRequestTaken", collabId =>
             OnCollaborationRequestTaken?.Invoke(collabId) ?? Task.CompletedTask);
 
@@ -320,6 +332,16 @@ public class CollaborationHubService(HttpClient http, IAuthService auth) : IColl
             var customerName = j.TryGetProperty("customerName",    out var p3) ? p3.GetString() ?? "" : "";
             // Args order: (collabId, fromAgent, customerName) — matches OnTransferReceived(collabId, fromAgentId, customerName)
             return OnTransferReceived?.Invoke(collabId, fromAgent, customerName) ?? Task.CompletedTask;
+        });
+
+        _hub.On<object>("InternalDirectChatRequest", raw =>
+        {
+            var j            = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+                System.Text.Json.JsonSerializer.Serialize(raw), JsonOpts);
+            var collabId     = j.TryGetProperty("collaborationId", out var p1) ? p1.GetString() ?? "" : "";
+            var senderName   = j.TryGetProperty("senderName",      out var p2) ? p2.GetString() ?? "" : "";
+            var senderType   = j.TryGetProperty("senderUserType",  out var p3) ? p3.GetString() ?? "" : "";
+            return OnInternalDirectChatReceived?.Invoke(collabId, senderName, senderType) ?? Task.CompletedTask;
         });
 
         _hub.On<object>("InternalChannelsUpdated", raw =>

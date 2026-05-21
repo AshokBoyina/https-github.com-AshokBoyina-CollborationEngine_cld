@@ -133,6 +133,8 @@ public sealed class CollaborationHub(
             await Groups.AddToGroupAsync(connId, SignalRGroups.Agent(userId));
         if (CurrentUserType == "Supervisor")
             await Groups.AddToGroupAsync(connId, SignalRGroups.Supervisor(userId));
+        if (CurrentUserType == "Internal")
+            await Groups.AddToGroupAsync(connId, SignalRGroups.Internal(userId));
         if (CurrentUserType is "StandaloneMonitor")
             await Groups.AddToGroupAsync(connId, SignalRGroups.StandaloneMonitor(appId));
 
@@ -290,7 +292,7 @@ public sealed class CollaborationHub(
 
     public async Task JoinCollaborationGroup(string collaborationId)
     {
-        var collabGuid = Guid.Parse(collaborationId);
+        if (!Guid.TryParse(collaborationId, out var collabGuid)) return;
         await Groups.AddToGroupAsync(Context.ConnectionId,
             SignalRGroups.Collaboration(collabGuid));
 
@@ -310,7 +312,7 @@ public sealed class CollaborationHub(
 
     public async Task LeaveCollaborationGroup(string collaborationId)
     {
-        var collabGuid = Guid.Parse(collaborationId);
+        if (!Guid.TryParse(collaborationId, out var collabGuid)) return;
         await Groups.RemoveFromGroupAsync(Context.ConnectionId,
             SignalRGroups.Collaboration(collabGuid));
 
@@ -371,46 +373,91 @@ public sealed class CollaborationHub(
 
     // ── Collaboration lifecycle ──────────────────────────────────────────────
 
-    /// <summary>External user requests a live collaboration (escalation from bot/standalone).</summary>
+    /// <summary>
+    /// Requests a live collaboration.
+    /// • External users: broadcasts to all agents in the app (queue behaviour).
+    /// • Internal users with a specific preferredAgentId: routes ONLY to that one person
+    ///   (InternalDirect mode — agent/supervisor/internal gets a private accept/reject popup).
+    /// </summary>
     public async Task RequestCollaboration(string? preferredAgentId)
     {
         Guid? preferredAgent = Guid.TryParse(preferredAgentId, out var ag) ? ag : null;
-        var result  = await sender.Send(
+
+        // InternalDirect: Internal staff clicking a specific person in their directory.
+        var isInternalDirect = CurrentUserType == "Internal" && preferredAgent.HasValue;
+
+        var result = await sender.Send(
             new StartCollaborationCommand(CurrentUserId, preferredAgent, CurrentApplicationId));
 
-        // Add external user to the collab group immediately so they receive future events
-        await Groups.AddToGroupAsync(Context.ConnectionId,
-            SignalRGroups.Collaboration(result.Id));
+        // Stamp ChatMode = "InternalDirect" for internal-to-staff chats so receiving clients
+        // know to render the simplified panel (no Transfer / Whisper / Invite Supervisor).
+        if (isInternalDirect)
+        {
+            var collab = await db.Collaborations.FindAsync(result.Id);
+            if (collab is not null)
+            {
+                collab.ChatMode = "InternalDirect";
+                await db.SaveChangesAsync();
+            }
+        }
 
-        // Resolve display name — prefer JWT claims, fall back to DB user record
+        // Add caller to the collaboration group immediately
+        await Groups.AddToGroupAsync(Context.ConnectionId, SignalRGroups.Collaboration(result.Id));
+
+        // Resolve display name — prefer JWT claims, fall back to DB record
         var displayName = CurrentDisplayName;
         if (string.IsNullOrWhiteSpace(displayName))
         {
-            var dbUser = await db.Users.FirstOrDefaultAsync(
-                u => u.Id == CurrentUserId);
-            if (dbUser != null)
+            var dbUser = await db.Users.FirstOrDefaultAsync(u => u.Id == CurrentUserId);
+            if (dbUser is not null)
                 displayName = $"{dbUser.FirstName} {dbUser.LastName}".Trim();
         }
         if (string.IsNullOrWhiteSpace(displayName))
             displayName = $"User {CurrentUserId.ToString()[..4].ToUpper()}";
 
-        // Notify caller with basic info
+        // Notify caller
         await Clients.Caller.SendAsync("CollaborationCreated", new
         {
             CollaborationId = result.Id.ToString(),
             Status          = result.Status
         });
 
-        // Notify all agents/supervisors in the application with enriched payload
-        await Clients
-            .Group(SignalRGroups.Application(CurrentApplicationId))
-            .SendAsync("NewCollaborationRequest", new
+        if (isInternalDirect)
+        {
+            // ── Internal direct chat ───────────────────────────────────────────
+            // Route notification ONLY to the specific target user's personal group.
+            // Look up their role so we can pick the right group name.
+            var targetSession = await db.CurrentSessions
+                .FirstOrDefaultAsync(s => s.UserId == preferredAgent!.Value);
+
+            var targetGroup = targetSession?.UserType switch
+            {
+                "Agent"      => SignalRGroups.Agent(preferredAgent!.Value),
+                "Supervisor" => SignalRGroups.Supervisor(preferredAgent!.Value),
+                _            => SignalRGroups.Internal(preferredAgent!.Value)
+            };
+
+            await Clients.Group(targetGroup).SendAsync("InternalDirectChatRequest", new
             {
                 CollaborationId = result.Id.ToString(),
-                Status          = result.Status,
-                CustomerName    = displayName,
-                CustomerUserId  = CurrentUserId.ToString()
+                SenderName      = displayName,
+                SenderUserType  = CurrentUserType   // "Internal"
             });
+        }
+        else
+        {
+            // ── Normal customer escalation ─────────────────────────────────────
+            // Broadcast to all agents/supervisors in the application.
+            await Clients
+                .Group(SignalRGroups.Application(CurrentApplicationId))
+                .SendAsync("NewCollaborationRequest", new
+                {
+                    CollaborationId = result.Id.ToString(),
+                    Status          = result.Status,
+                    CustomerName    = displayName,
+                    CustomerUserId  = CurrentUserId.ToString()
+                });
+        }
     }
 
     /// <summary>Agent accepts an incoming collaboration (or re-joins a transferred one).</summary>
@@ -450,12 +497,30 @@ public sealed class CollaborationHub(
         if (string.IsNullOrWhiteSpace(agentDisplayName))
             agentDisplayName = $"Agent {CurrentUserId.ToString()[..4].ToUpper()}";
 
+        // Resolve customer name AND chat mode for supervisor notification payload
+        var collabMeta = await db.Collaborations
+            .Include(c => c.ExternalUser)
+            .Where(c => c.Id == collabGuid)
+            .Select(c => new
+            {
+                CustomerName = c.ExternalUser != null
+                    ? c.ExternalUser.FirstName + " " + c.ExternalUser.LastName
+                    : "Customer",
+                c.ChatMode
+            })
+            .FirstOrDefaultAsync();
+
+        var customerForPayload = (collabMeta?.CustomerName ?? "Customer").Trim();
+        if (string.IsNullOrWhiteSpace(customerForPayload)) customerForPayload = "Customer";
+        var isInternalDirect = collabMeta?.ChatMode == "InternalDirect";
+
         var payload = new
         {
             CollaborationId = collabGuid.ToString(),
             Status          = resultStatus,
             AgentId         = CurrentUserId.ToString(),
-            AgentName       = agentDisplayName
+            AgentName       = agentDisplayName,
+            CustomerName    = customerForPayload   // ← needed by supervisors
         };
 
         // Notify the collaboration group (customer sees agent name, transitions out of Searching)
@@ -463,10 +528,25 @@ public sealed class CollaborationHub(
             .Group(SignalRGroups.Collaboration(collabGuid))
             .SendAsync("CollaborationAccepted", payload);
 
-        // Notify ALL agents in the application so they dismiss their incoming popup
-        await Clients
-            .Group(SignalRGroups.Application(CurrentApplicationId))
-            .SendAsync("CollaborationRequestTaken", collabGuid.ToString());
+        // Notify ALL agents in the application so they dismiss their incoming popup.
+        // Skip for InternalDirect: no customer popup was shown so no dismissal is needed,
+        // and broadcasting would trigger OnRequestTaken on every agent unnecessarily.
+        if (!isInternalDirect)
+        {
+            await Clients
+                .Group(SignalRGroups.Application(CurrentApplicationId))
+                .SendAsync("CollaborationRequestTaken", collabGuid.ToString());
+        }
+
+        // Notify supervisors in the application — session is now ACTIVE (agent + customer connected).
+        // Skip for InternalDirect: internal staff DMs must NOT appear in the supervisor Live-Sessions
+        // sidebar — they are private peer-to-peer chats, not customer service collaborations.
+        if (!isInternalDirect)
+        {
+            await Clients
+                .Group(SignalRGroups.Application(CurrentApplicationId))
+                .SendAsync("SessionActivated", payload);
+        }
 
         // Push message history to this agent so they see the full conversation.
         // Wrap with collaborationId so the client can route to the correct session
