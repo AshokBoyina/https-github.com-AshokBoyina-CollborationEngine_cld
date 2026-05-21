@@ -67,7 +67,7 @@ public class NiceBotApiService(
         if (!string.IsNullOrWhiteSpace(apiAccessKey))
             req.Headers.Add("X-API-Access-Key", apiAccessKey);
 
-        logger.LogDebug("BotApi → POST {Url} session={SessionId}", url, sessionId);
+        logger.LogInformation("BotApi → POST {Url} session={SessionId}", url, sessionId);
 
         try
         {

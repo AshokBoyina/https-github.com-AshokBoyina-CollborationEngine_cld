@@ -116,10 +116,31 @@ public static class DependencyInjection
         // UseRealBot = false (default) → NoOpBotService; UI mock in ExternalChat.razor handles bot replies.
         // UseRealBot = true            → NiceBotApiService calls the real NICE bot API.
         // ISignalRNotifier registered in Program.cs (avoids Infrastructure→API circular dep).
+        //
+        // IMPORTANT: BotApiOptions MUST be bound regardless of the flag so that
+        // IOptions<BotApiOptions> resolves to the correct values (not empty defaults)
+        // when UseRealBot=true.  Without this Configure call, BaseUrl is "" and
+        // NiceBotApiService builds an invalid relative URL, causing the HTTP call to
+        // throw InvalidOperationException before ever leaving the server.
+        services.Configure<BotApiOptions>(config.GetSection(BotApiOptions.SectionName));
+
         if (flags.UseRealBot)
-            services.AddHttpClient<IBotService, NiceBotApiService>();
+        {
+            services.AddHttpClient<IBotService, NiceBotApiService>(client =>
+            {
+                // Set HttpClient BaseAddress from config so relative-URL mistakes are caught early.
+                var baseUrl = config[$"{BotApiOptions.SectionName}:BaseUrl"];
+                if (!string.IsNullOrWhiteSpace(baseUrl))
+                    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+
+                var timeoutSec = config.GetValue<int>($"{BotApiOptions.SectionName}:TimeoutSeconds", 30);
+                client.Timeout  = TimeSpan.FromSeconds(timeoutSec);
+            });
+        }
         else
+        {
             services.AddScoped<IBotService, NoOpBotService>();
+        }
 
         return services;
     }
