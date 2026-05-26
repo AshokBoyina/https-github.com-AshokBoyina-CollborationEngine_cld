@@ -29,12 +29,19 @@ public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext d
 
         return collabs.Select(c =>
         {
-            // Find the External (customer) participant to get a display name
+            // Customer — the External participant
             var customerParticipant = c.Participants
                 .FirstOrDefault(p => p.UserType == "External");
-            var customerName = customerParticipant?.User is { } u
-                ? $"{u.FirstName} {u.LastName}".Trim()
+            var customerName = customerParticipant?.User is { } cu
+                ? $"{cu.FirstName} {cu.LastName}".Trim()
                 : "Customer";
+
+            // Agent — the first non-External participant (Agent / Supervisor / Internal)
+            var agentParticipant = c.Participants
+                .FirstOrDefault(p => p.UserType != "External");
+            var agentName = agentParticipant?.User is { } au
+                ? $"{au.FirstName} {au.LastName}".Trim()
+                : "";
 
             return new CollaborationResponse
             {
@@ -43,7 +50,8 @@ public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext d
                 Type         = c.ChatMode,
                 StartedAt    = c.CreatedAt,
                 EndedAt      = c.EndedAt,
-                CustomerName = customerName
+                CustomerName = string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName,
+                AgentName    = agentName
             };
         });
     }

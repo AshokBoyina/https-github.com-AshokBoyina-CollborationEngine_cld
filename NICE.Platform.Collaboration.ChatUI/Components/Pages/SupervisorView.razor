@@ -65,7 +65,9 @@
                          @onclick="() => WatchCollab(c.CollabId)">
                         <div class="nc-item-av" style="background:@AvatarColor(c.CustomerName)">@Initials(c.CustomerName)</div>
                         <div class="nc-item-body">
-                            <div class="nc-item-name">@c.CustomerName</div>
+                            <div class="nc-item-name">
+                                @c.CustomerName@(string.IsNullOrEmpty(c.AgentName) ? "" : $" – {c.AgentName}")
+                            </div>
                             <div class="nc-item-sub">
                                 @(c.IsJoined ? "✓ Joined" : "Click to watch")
                                 · @c.StartedAt.ToString("HH:mm")
@@ -108,7 +110,7 @@
                         <div class="nc-item-av" style="background:@AvatarColor(_watchingCollab.CustomerName);width:28px;height:28px;font-size:.7rem">
                             @Initials(_watchingCollab.CustomerName)
                         </div>
-                        Watching: <b>@_watchingCollab.CustomerName</b>
+                        <b>@_watchingCollab.CustomerName@(string.IsNullOrEmpty(_watchingCollab.AgentName) ? "" : $" – {_watchingCollab.AgentName}")</b>
                         @if (!_watchingCollab.IsJoined)
                         {
                             <button class="btn btn--primary" style="margin-left:10px" @onclick="JoinCurrentCollab"
@@ -300,7 +302,20 @@
             {
                 <div class="nc-rp-section">
                     <div class="nc-rp-title">Session info</div>
-                    <div class="nc-rp-row"><span class="nc-rp-key">Customer</span><span class="nc-rp-val">@_watchingCollab.CustomerName</span></div>
+                    <div class="nc-rp-row"><span class="nc-rp-key">User</span><span class="nc-rp-val">@_watchingCollab.CustomerName</span></div>
+                    <div class="nc-rp-row">
+                        <span class="nc-rp-key">Agent</span>
+                        <span class="nc-rp-val">
+                            @if (!string.IsNullOrEmpty(_watchingCollab.AgentName))
+                            {
+                                <span>@_watchingCollab.AgentName</span>
+                            }
+                            else
+                            {
+                                <span style="color:var(--nice-text-muted);font-style:italic">Unassigned</span>
+                            }
+                        </span>
+                    </div>
                     <div class="nc-rp-row"><span class="nc-rp-key">Started</span><span class="nc-rp-val">@_watchingCollab.StartedAt.ToString("HH:mm")</span></div>
                     <div class="nc-rp-row"><span class="nc-rp-key">Messages</span><span class="nc-rp-val">@_watchingCollab.Messages.Count</span></div>
                     <div class="nc-rp-row"><span class="nc-rp-key">Screen</span>
@@ -532,7 +547,7 @@
                 var idStr = collab.Id.ToString();
                 if (_activeCollabs.Any(c => c.CollabId == idStr)) continue;
                 var name = string.IsNullOrWhiteSpace(collab.CustomerName) ? "Customer" : collab.CustomerName;
-                _activeCollabs.Add(new WatchedCollab(idStr, name, collab.StartedAt));
+                _activeCollabs.Add(new WatchedCollab(idStr, name, collab.AgentName, collab.StartedAt));
             }
 
             _activeCollabs = [.. _activeCollabs.OrderByDescending(c => c.StartedAt)];
@@ -564,7 +579,7 @@
                     ? "Customer"
                     : collab.CustomerName;
 
-                _activeCollabs.Add(new WatchedCollab(collabIdStr, customerName, collab.StartedAt));
+                _activeCollabs.Add(new WatchedCollab(collabIdStr, customerName, collab.AgentName, collab.StartedAt));
             }
 
             // Re-sort: most-recent first (matching the hub event insert order)
@@ -684,7 +699,7 @@
         {
             if (_activeCollabs.Any(c => c.CollabId == collabId)) return;
             var name = string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName;
-            _activeCollabs.Insert(0, new WatchedCollab(collabId, name));
+            _activeCollabs.Insert(0, new WatchedCollab(collabId, name, agentName));
             StateHasChanged();
         });
     }
@@ -806,13 +821,14 @@
 
         // Load history for this collab if not already loaded
         var c = _watchingCollab;
-        if (c != null && !c.HistoryLoaded && Guid.TryParse(collabId, out var guid))
+        if (c != null && !c.HistoryLoaded)
         {
+            Guid.TryParse(collabId, out var collabGuid);
             _loadingHistory = true;
             StateHasChanged();
             try
             {
-                var msgs = await Demo.GetCollaborationMessagesAsync(guid);
+                var msgs = await Demo.GetCollaborationMessagesAsync(collabGuid);
                 if (msgs.Any())
                 {
                     // Prepend history (only messages not already streamed in real-time)
@@ -936,7 +952,7 @@
         {
             // Register collab in sidebar if not already present
             if (!_activeCollabs.Any(c => c.CollabId == collabId))
-                _activeCollabs.Insert(0, new WatchedCollab(collabId, customerName));
+                _activeCollabs.Insert(0, new WatchedCollab(collabId, customerName, agentName));
 
             _inviteCollabId  = collabId;
             _inviteCustomer  = customerName;
@@ -1129,6 +1145,32 @@
     async Task OnInternalDmKey(KeyboardEventArgs e, InternalDmSession dm)
     {
         if (e.Key == "Enter" && !e.ShiftKey) await SendInternalDm(dm);
+    }
+
+    // ── WatchedCollab ─────────────────────────────────────────────────────────
+    /// <summary>Represents a live customer collaboration session the supervisor is monitoring.</summary>
+    sealed class WatchedCollab
+    {
+        public string            CollabId        { get; }
+        public string            CustomerName    { get; }
+        public string            AgentName       { get; set; }
+        public DateTime          StartedAt       { get; }
+        public bool              IsJoined        { get; set; }
+        public bool              IsScreenSharing { get; set; }
+        public bool              HistoryLoaded   { get; set; }
+        public List<ChatMessage> Messages        { get; } = new();
+
+        public WatchedCollab(string collabId, string customerName, string agentName, DateTime startedAt)
+        {
+            CollabId     = collabId;
+            CustomerName = customerName;
+            AgentName    = agentName;
+            StartedAt    = startedAt;
+        }
+
+        /// <summary>Real-time event ctor — StartedAt defaults to now.</summary>
+        public WatchedCollab(string collabId, string customerName, string agentName)
+            : this(collabId, customerName, agentName, DateTime.UtcNow) { }
     }
 
     // ── InternalDmSession ─────────────────────────────────────────────────────

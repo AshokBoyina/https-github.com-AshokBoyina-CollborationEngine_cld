@@ -12,6 +12,7 @@ window.chatStorage = {
     },
     clear: () => {
         try { localStorage.removeItem('nice_session'); } catch {}
+        try { localStorage.removeItem('nice_token');   } catch {}   // legacy key — clean up too
     },
     // Kept for backward compat — no longer primary storage
     setToken: (token) => {

@@ -125,11 +125,56 @@ public class AuthService(HttpClient http, IJSRuntime js) : IAuthService
                 var restored = System.Text.Json.JsonSerializer.Deserialize<UserSession>(saved, JsonOpts);
                 if (restored is not null && !string.IsNullOrEmpty(restored.Token))
                 {
+                    // Reject expired tokens — don't silently restore a dead session.
+                    // The user will be redirected to /login which will prompt re-auth.
+                    if (IsJwtExpired(restored.Token))
+                    {
+                        try { await js.InvokeVoidAsync("chatStorage.clear"); } catch { }
+                        return;
+                    }
+
                     _current = restored;
                     OnChange?.Invoke();
                 }
             }
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Returns true if the JWT's <c>exp</c> claim is in the past (or cannot be parsed).
+    /// Decodes base64url payload without any external library — pure string manipulation.
+    /// </summary>
+    private static bool IsJwtExpired(string token)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return true;
+
+            // Base64url → base64 standard
+            var payload = parts[1];
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "=";  break;
+            }
+
+            var bytes   = Convert.FromBase64String(payload);
+            var json    = System.Text.Encoding.UTF8.GetString(bytes);
+            var doc     = System.Text.Json.JsonDocument.Parse(json);
+            var root    = doc.RootElement;
+
+            if (!root.TryGetProperty("exp", out var expProp)) return false; // no exp → treat as valid
+
+            var exp         = expProp.GetInt64();
+            var nowEpoch    = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            return nowEpoch >= exp;
+        }
+        catch
+        {
+            return true; // if we can't parse, treat as expired (safe default)
+        }
     }
 }

@@ -8,4 +8,6 @@ public class CollaborationResponse
     public DateTime? EndedAt { get; set; }
     /// <summary>Display name of the External (customer) participant. Empty string if no customer participant recorded yet.</summary>
     public string CustomerName { get; set; } = "";
+    /// <summary>Display name of the Agent (non-External) participant handling this session. Empty string if not yet assigned.</summary>
+    public string AgentName    { get; set; } = "";
 }

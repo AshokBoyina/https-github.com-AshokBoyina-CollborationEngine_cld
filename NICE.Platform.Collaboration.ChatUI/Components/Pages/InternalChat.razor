@@ -317,18 +317,18 @@
         _myUserId   = Auth.Current.UserId;
         _myInitials = Initials(Auth.Current.DisplayName);
 
-        Hub.OnOnlineUsersUpdated         += OnOnlineUsersUpdated;
-        Hub.OnMessageReceived            += OnMessageReceived;
-        Hub.OnCollaborationCreated       += OnCollaborationCreated;
-        Hub.OnCollaborationAccepted      += OnCollaborationAccepted;
-        Hub.OnCollaborationEnded         += OnCollaborationEnded;
-        Hub.OnConnectionChanged          += OnConnectionChanged;
-        Hub.OnInternalDirectChatReceived += OnIncomingDirectChat;
+        Hub.OnCollaborationCreated        += OnCollaborationCreated;
+        Hub.OnInternalDirectChatReceived  += OnInternalDirectChatReceived;
+        Hub.OnCollaborationEnded          += OnCollaborationEnded;
+        Hub.OnMessageReceived             += OnMessageReceived;
+        Hub.OnOnlineUsersUpdated          += OnOnlineUsersUpdated;
+        Hub.OnConnectionChanged           += OnConnectionChanged;
+        Hub.OnForceDisconnected           += OnForceDisconnected;
 
         if (Hub.ConnectionState != HubConnectionState.Connected)
         {
             try { await Hub.ConnectAsync(); }
-            catch (Exception ex) { Console.WriteLine($"[InternalChat] Hub connect failed: {ex.Message}"); }
+            catch (Exception ex) { Console.WriteLine($"[InternalChat] Connect failed: {ex.Message}"); return; }
         }
 
         await LoadUsersAsync();
@@ -336,316 +336,296 @@
 
     public async ValueTask DisposeAsync()
     {
-        Hub.OnOnlineUsersUpdated         -= OnOnlineUsersUpdated;
-        Hub.OnMessageReceived            -= OnMessageReceived;
-        Hub.OnCollaborationCreated       -= OnCollaborationCreated;
-        Hub.OnCollaborationAccepted      -= OnCollaborationAccepted;
-        Hub.OnCollaborationEnded         -= OnCollaborationEnded;
-        Hub.OnConnectionChanged          -= OnConnectionChanged;
-        Hub.OnInternalDirectChatReceived -= OnIncomingDirectChat;
+        Hub.OnCollaborationCreated        -= OnCollaborationCreated;
+        Hub.OnInternalDirectChatReceived  -= OnInternalDirectChatReceived;
+        Hub.OnCollaborationEnded          -= OnCollaborationEnded;
+        Hub.OnMessageReceived             -= OnMessageReceived;
+        Hub.OnOnlineUsersUpdated          -= OnOnlineUsersUpdated;
+        Hub.OnConnectionChanged           -= OnConnectionChanged;
+        Hub.OnForceDisconnected           -= OnForceDisconnected;
 
-        // Leave every open session cleanly (don't End — the other side keeps their copy)
-        foreach (var s in _sessions.ToList())
-        {
-            if (!string.IsNullOrEmpty(s.CollabId))
-            {
-                try { await Hub.LeaveCollaborationAsync(s.CollabId); } catch { }
-            }
-        }
+        try { await Hub.DisconnectAsync(); } catch { }
     }
+
+    // ── Hub event handlers ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fired when the server confirms a new collaboration was created for our request.
+    /// Routes to the session identified by <see cref="_pendingPeerId"/> so we can
+    /// update its CollabId even though it was set asynchronously.
+    /// </summary>
+    Task OnCollaborationCreated(string collabId, string extra) => InvokeAsync(() =>
+    {
+        if (string.IsNullOrEmpty(_pendingPeerId)) return;
+        var sess = _sessions.FirstOrDefault(s => s.PeerId == _pendingPeerId);
+        if (sess != null)
+            sess.CollabId = collabId;
+        _pendingPeerId = string.Empty;
+        StateHasChanged();
+    });
+
+    Task OnInternalDirectChatReceived(string collabId, string senderName, string senderUserType) => InvokeAsync(() =>
+    {
+        _showIncomingRequest  = true;
+        _incomingCollabId     = collabId;
+        _incomingFromName     = senderName;
+        _incomingFromUserType = senderUserType;
+        StateHasChanged();
+    });
+
+    Task OnCollaborationEnded(string collabId) => InvokeAsync(() =>
+    {
+        // If a session ended that we were chatting in, mark it gone
+        var sess = _sessions.FirstOrDefault(s => s.CollabId == collabId);
+        if (sess != null)
+        {
+            _sessions.Remove(sess);
+            if (_viewingPeerId == sess.PeerId)
+                _viewingPeerId = string.Empty;
+        }
+        StateHasChanged();
+    });
+
+    Task OnMessageReceived(ChatMessage msg) => InvokeAsync(async () =>
+    {
+        var sess = _sessions.FirstOrDefault(s => s.CollabId == msg.CollaborationId);
+        if (sess == null) return;
+
+        msg.IsMine = msg.SenderId == _myUserId;
+        sess.Messages.Add(msg);
+
+        // Make session active if it's still in Waiting state (other side sent first message)
+        if (sess.State == SessState.Waiting)
+            sess.State = SessState.Active;
+
+        StateHasChanged();
+
+        if (_viewingPeerId == sess.PeerId)
+        {
+            await Task.Delay(30);
+            try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "ic-chat-scroll"); } catch { }
+        }
+    });
+
+    Task OnOnlineUsersUpdated(List<OnlineUserInfo> users) => InvokeAsync(() =>
+    {
+        // Show all online users except ourselves
+        _users = users.Where(u => u.UserId.ToString() != _myUserId).ToList();
+        _loadingUsers = false;
+        StateHasChanged();
+    });
+
+    void OnConnectionChanged() => InvokeAsync(StateHasChanged);
+
+    void OnForceDisconnected(string reason) =>
+        InvokeAsync(() => { Nav.NavigateTo("/login", forceLoad: true); });
+
+    // ── UI action methods ──────────────────────────────────────────────────
 
     async Task LoadUsersAsync()
     {
         _loadingUsers = true;
         StateHasChanged();
-        var appId = Guid.TryParse(Auth.Current.ApplicationId, out var g) ? g : Guid.Empty;
-        var raw   = await Demo.GetOnlineUsersAsync(appId);
-        // Show all non-External staff except self
-        _users = raw
-            .Where(u => u.UserId.ToString() != _myUserId)
-            .OrderBy(u => u.UserType)
-            .ThenBy(u => u.DisplayName)
-            .ToList();
-        _loadingUsers = false;
-        StateHasChanged();
-    }
-
-    // ── Hub handlers ───────────────────────────────────────────────────────
-    async Task OnOnlineUsersUpdated(List<OnlineUserInfo> users)
-    {
-        _users = users
-            .Where(u => u.UserId.ToString() != _myUserId)
-            .OrderBy(u => u.UserType)
-            .ThenBy(u => u.DisplayName)
-            .ToList();
-        await InvokeAsync(StateHasChanged);
-    }
-
-    /// <summary>Server confirmed the collaboration was created — attach the CollabId to the pending session.</summary>
-    Task OnCollaborationCreated(string collabId, string status)
-    {
-        var session = _sessions.FirstOrDefault(s => s.PeerId == _pendingPeerId);
-        if (session != null)
+        try
         {
-            session.CollabId = collabId;
-            session.State    = SessState.Waiting;
-            _ = Hub.JoinCollaborationAsync(collabId);
-        }
-        _pendingPeerId = string.Empty;
-        return InvokeAsync(StateHasChanged);
-    }
-
-    /// <summary>The other person accepted — mark session active.</summary>
-    Task OnCollaborationAccepted(string collabId, string status, string agentName)
-    {
-        var session = _sessions.FirstOrDefault(s => s.CollabId == collabId);
-        if (session != null)
-        {
-            session.State = SessState.Active;
-            return InvokeAsync(StateHasChanged);
-        }
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// The other side ended/declined the session.
-    /// If Waiting → mark Declined.  If Active → remove the session.
-    /// </summary>
-    Task OnCollaborationEnded(string collabId)
-    {
-        var session = _sessions.FirstOrDefault(s => s.CollabId == collabId);
-        if (session == null) return Task.CompletedTask;
-
-        if (session.State == SessState.Waiting)
-        {
-            session.State = SessState.Declined;
-        }
-        else
-        {
-            // Ended by the other side while active — drop it
-            if (_viewingPeerId == session.PeerId)
-                _viewingPeerId = string.Empty;
-            _sessions.Remove(session);
-        }
-        return InvokeAsync(StateHasChanged);
-    }
-
-    /// <summary>Route incoming messages to the correct session by CollabId.</summary>
-    Task OnMessageReceived(ChatMessage msg)
-    {
-        var session = _sessions.FirstOrDefault(s => s.CollabId == msg.CollaborationId);
-        if (session == null || session.State != SessState.Active) return Task.CompletedTask;
-        if (msg.SenderId == _myUserId) return Task.CompletedTask;   // skip own echo
-
-        session.Messages.Add(msg);
-        return InvokeAsync(async () =>
-        {
-            StateHasChanged();
-            // Only auto-scroll if this session is the one currently on screen
-            if (_viewingPeerId == session.PeerId)
+            var appId = Auth.Current.ApplicationId_Guid;
+            if (appId != Guid.Empty)
             {
-                try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "ic-chat-scroll"); } catch { }
+                var all = await Demo.GetOnlineUsersAsync(appId);
+                _users = all.Where(u => u.UserId.ToString() != _myUserId).ToList();
             }
-        });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[InternalChat] LoadUsers failed: {ex.Message}");
+        }
+        finally
+        {
+            _loadingUsers = false;
+            StateHasChanged();
+        }
     }
 
-    void OnConnectionChanged() => InvokeAsync(StateHasChanged);
-
-    // ── Actions ────────────────────────────────────────────────────────────
-    /// <summary>
-    /// Sidebar click: switch view if a session already exists, otherwise create
-    /// a new session and request the collaboration.
-    /// </summary>
-    void SelectUser(OnlineUserInfo user)
+    async Task SelectUser(OnlineUserInfo user)
     {
-        if (user.UserId.ToString() == _myUserId) return;
         var uidStr = user.UserId.ToString();
 
+        // Already have a session for this peer — just switch to it
         var existing = _sessions.FirstOrDefault(s => s.PeerId == uidStr);
         if (existing != null)
         {
-            // Switch the main panel to show this existing session
             _viewingPeerId = uidStr;
             StateHasChanged();
             return;
         }
 
-        // No session yet — create one and send the request
-        var newSession = new InternalDmSession
+        // Create a new Waiting session and send a DM request
+        var sess = new InternalDmSession
         {
             PeerId       = uidStr,
             PeerName     = user.DisplayName,
-            PeerUserType = user.UserType
+            PeerUserType = user.UserType,
+            State        = SessState.Waiting
         };
-        _sessions.Add(newSession);
+        _sessions.Add(sess);
         _viewingPeerId = uidStr;
-        _pendingPeerId = uidStr;   // OnCollaborationCreated will look up by this
+        _pendingPeerId = uidStr;
         StateHasChanged();
 
-        _ = RequestChatAsync(uidStr);
-    }
-
-    async Task RequestChatAsync(string targetUserId)
-    {
-        try { await Hub.RequestCollaborationAsync(targetUserId); }
-        catch (Exception ex) { Console.WriteLine($"[InternalChat] RequestCollaboration error: {ex.Message}"); }
-    }
-
-    /// <summary>Cancel an outgoing pending request and remove the session.</summary>
-    async Task CancelRequest(InternalDmSession session)
-    {
-        var collabId = session.CollabId;
-        RemoveSession(session);
-        if (!string.IsNullOrEmpty(collabId))
+        try
         {
-            try { await Hub.EndCollaborationAsync(collabId); } catch { }
-            try { await Hub.LeaveCollaborationAsync(collabId); } catch { }
+            await Hub.RequestCollaborationAsync(preferredAgentId: uidStr);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[InternalChat] RequestCollaboration failed: {ex.Message}");
+            // Remove the pending session on failure
+            _sessions.Remove(sess);
+            _viewingPeerId = string.Empty;
+            _pendingPeerId = string.Empty;
+            StateHasChanged();
         }
     }
 
-    /// <summary>Explicitly end an active session (user clicked "End chat").</summary>
-    async Task EndChat(InternalDmSession session)
+    async Task AcceptIncomingDirectChat()
     {
-        var collabId = session.CollabId;    // capture before removing — OnCollaborationEnded
-        RemoveSession(session);             // will try to look up the session by collabId
+        _showIncomingRequest = false;
+        var collabId = _incomingCollabId;
+        var fromName = _incomingFromName;
+        var fromType = _incomingFromUserType;
+        _incomingCollabId     = string.Empty;
+        _incomingFromName     = string.Empty;
+        _incomingFromUserType = string.Empty;
+
+        // Match sender to the user in our directory by display name
+        var matchedUser = _users.FirstOrDefault(u =>
+            string.Equals(u.DisplayName, fromName, StringComparison.OrdinalIgnoreCase));
+        var peerId = matchedUser?.UserId.ToString() ?? collabId;
+
+        // Avoid duplicate sessions
+        if (!_sessions.Any(s => s.PeerId == peerId || s.CollabId == collabId))
+        {
+            _sessions.Add(new InternalDmSession
+            {
+                PeerId       = peerId,
+                PeerName     = fromName,
+                PeerUserType = fromType,
+                CollabId     = collabId,
+                State        = SessState.Active
+            });
+        }
+
+        _viewingPeerId = peerId;
+        StateHasChanged();
+
+        try { await Hub.AcceptCollaborationAsync(collabId); } catch { }
+    }
+
+    async Task DeclineIncomingDirectChat()
+    {
+        _showIncomingRequest = false;
+        var collabId = _incomingCollabId;
+        _incomingCollabId     = string.Empty;
+        _incomingFromName     = string.Empty;
+        _incomingFromUserType = string.Empty;
+        StateHasChanged();
+        try { await Hub.EndCollaborationAsync(collabId, "Declined"); } catch { }
+    }
+
+    async Task CancelRequest(InternalDmSession sess)
+    {
+        var collabId = sess.CollabId;
+        RemoveSession(sess);
         if (!string.IsNullOrEmpty(collabId))
         {
-            try { await Hub.EndCollaborationAsync(collabId); } catch { }
-            try { await Hub.LeaveCollaborationAsync(collabId); } catch { }
+            try { await Hub.EndCollaborationAsync(collabId, "Cancelled"); } catch { }
         }
     }
 
-    /// <summary>Just deselect the main panel without ending any session.</summary>
+    void RemoveSession(InternalDmSession sess)
+    {
+        _sessions.Remove(sess);
+        if (_viewingPeerId == sess.PeerId)
+            _viewingPeerId = string.Empty;
+        StateHasChanged();
+    }
+
+    async Task EndChat(InternalDmSession sess)
+    {
+        // Capture collabId BEFORE removing session — RemoveSession clears PeerId tracking
+        var collabId = sess.CollabId;
+        RemoveSession(sess);
+        if (!string.IsNullOrEmpty(collabId))
+        {
+            try { await Hub.EndCollaborationAsync(collabId); } catch { }
+        }
+    }
+
+    async Task SendMessage(InternalDmSession sess)
+    {
+        var text = sess.Draft.Trim();
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrEmpty(sess.CollabId)) return;
+
+        sess.Draft   = "";
+        _sending     = true;
+        StateHasChanged();
+        try
+        {
+            await Hub.SendMessageAsync(sess.CollabId, text);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[InternalChat] SendMessage failed: {ex.Message}");
+        }
+        finally
+        {
+            _sending = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task OnInputKeyDown(KeyboardEventArgs e, InternalDmSession sess)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendMessage(sess);
+    }
+
     void DeselectSession()
     {
         _viewingPeerId = string.Empty;
         StateHasChanged();
     }
 
-    /// <summary>Remove a session from the list and clear the view if it was selected.</summary>
-    void RemoveSession(InternalDmSession session)
-    {
-        if (_viewingPeerId == session.PeerId)
-            _viewingPeerId = string.Empty;
-        _sessions.Remove(session);
-        StateHasChanged();
-    }
-
-    async Task SendMessage(InternalDmSession session)
-    {
-        var text = session.Draft.Trim();
-        if (string.IsNullOrWhiteSpace(text) || _sending || string.IsNullOrEmpty(session.CollabId)) return;
-
-        session.Draft = string.Empty;
-        _sending      = true;
-
-        // Optimistic local echo
-        session.Messages.Add(new ChatMessage
-        {
-            CollaborationId = session.CollabId,
-            SenderId        = _myUserId,
-            SenderName      = Auth.Current.DisplayName,
-            SenderRole      = "Internal",
-            Content         = text,
-            IsMine          = true,
-            SentAt          = DateTime.UtcNow
-        });
-        StateHasChanged();
-
-        try { await Hub.SendMessageAsync(session.CollabId, text); }
-        catch (Exception ex) { Console.WriteLine($"[InternalChat] SendMessage error: {ex.Message}"); }
-
-        _sending = false;
-        StateHasChanged();
-        try { await JS.InvokeVoidAsync("chatHelpers.scrollToBottom", "ic-chat-scroll"); } catch { }
-        try { await _inputRef.FocusAsync(); } catch { }
-    }
-
-    async Task OnInputKeyDown(KeyboardEventArgs e, InternalDmSession session)
-    {
-        if (e.Key == "Enter" && !e.ShiftKey) await SendMessage(session);
-    }
-
     async Task SignOut()
     {
-        // End all open sessions before leaving
-        foreach (var s in _sessions.ToList())
+        foreach (var sess in _sessions.ToList())
         {
-            var cid = s.CollabId;
-            if (!string.IsNullOrEmpty(cid))
+            if (!string.IsNullOrEmpty(sess.CollabId))
             {
-                try { await Hub.EndCollaborationAsync(cid); } catch { }
+                try { await Hub.EndCollaborationAsync(sess.CollabId); } catch { }
             }
         }
-        try { await Hub.DisconnectAsync(); } catch { }
-        Nav.NavigateTo("/login");
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login", replace: true);
     }
 
-    // ── Incoming DM (another Internal staff pinging this user) ─────────────
-    Task OnIncomingDirectChat(string collabId, string senderName, string senderUserType)
-        => InvokeAsync(() =>
-        {
-            _incomingCollabId     = collabId;
-            _incomingFromName     = senderName;
-            _incomingFromUserType = senderUserType;
-            _showIncomingRequest  = true;
-            StateHasChanged();
-        });
+    // ── Helpers ────────────────────────────────────────────────────────────
 
-    async Task AcceptIncomingDirectChat()
+    static string Initials(string name)
     {
-        _showIncomingRequest = false;
-
-        // Try to match the sender to a known user by display name so we can key by userId
-        var senderUser = _users.FirstOrDefault(u =>
-            string.Equals(u.DisplayName, _incomingFromName, StringComparison.OrdinalIgnoreCase));
-        // Fallback: use the collabId itself as the peer key (no userId known)
-        var peerId = senderUser?.UserId.ToString() ?? _incomingCollabId;
-
-        // If we already have a session for this peer (e.g. we also sent them a request simultaneously),
-        // update it rather than creating a duplicate.
-        var existing = _sessions.FirstOrDefault(s =>
-            s.PeerId == peerId || s.CollabId == _incomingCollabId);
-        if (existing != null)
-        {
-            existing.CollabId = _incomingCollabId;
-            existing.State    = SessState.Active;
-            _viewingPeerId    = existing.PeerId;
-        }
-        else
-        {
-            var newSession = new InternalDmSession
-            {
-                PeerId       = peerId,
-                PeerName     = _incomingFromName,
-                PeerUserType = _incomingFromUserType,
-                CollabId     = _incomingCollabId,
-                State        = SessState.Active
-            };
-            _sessions.Add(newSession);
-            _viewingPeerId = peerId;
-        }
-
-        StateHasChanged();
-
-        try { await Hub.JoinCollaborationAsync(_incomingCollabId); } catch { }
-        try { await Hub.AcceptCollaborationAsync(_incomingCollabId); } catch { }
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name[..Math.Min(2, name.Length)].ToUpper();
     }
 
-    async Task DeclineIncomingDirectChat()
-    {
-        _showIncomingRequest = false;
-        StateHasChanged();
-        try { await Hub.EndCollaborationAsync(_incomingCollabId); } catch { }
-    }
-
-    // ── Style helpers ──────────────────────────────────────────────────────
     static string UserTypeColor(string userType) => userType switch
     {
-        "Agent"      => "#3b82f6",
+        "Agent"      => "#2563eb",
         "Supervisor" => "#7c3aed",
-        "Internal"   => "#06b6d4",
-        _            => "#6b7280"
+        "Internal"   => "#0891b2",
+        _            => "#64748b"
     };
 
     static string UserTypeBadgeBg(string userType) => userType switch
@@ -653,22 +633,14 @@
         "Agent"      => "#eff6ff",
         "Supervisor" => "#f5f3ff",
         "Internal"   => "#ecfeff",
-        _            => "#f3f4f6"
+        _            => "#f1f5f9"
     };
 
     static string UserTypeBadgeColor(string userType) => userType switch
     {
         "Agent"      => "#1d4ed8",
         "Supervisor" => "#6d28d9",
-        "Internal"   => "#0891b2",
-        _            => "#374151"
+        "Internal"   => "#0e7490",
+        _            => "#475569"
     };
-
-    static string Initials(string name)
-    {
-        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length >= 2
-            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
-            : name.Length > 0 ? name[0].ToString().ToUpperInvariant() : "?";
-    }
 }

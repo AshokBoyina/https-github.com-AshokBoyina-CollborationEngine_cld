@@ -354,7 +354,7 @@
             }
             catch (Exception ex)
             {
-                AddSignalLog($"  ✗ Exception: {ex.Message}");
+                AddSignalLog($"  ✗ Exception in OnScreenShareOffer: {ex.Message}");
                 StateHasChanged();
             }
             finally
