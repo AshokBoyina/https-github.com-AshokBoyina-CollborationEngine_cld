@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.Requests;
+namespace NICE.Platform.Collaboration.Core.Requests;
 
 /// <summary>
 /// All authentication parameters arrive as HTTP request headers — there is no body.

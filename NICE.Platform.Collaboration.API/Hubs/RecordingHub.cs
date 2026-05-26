@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StartStandAloneRecording;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StopRecording;
 using NICE.Platform.Collaboration.Application.Interfaces.Services;
-using NICE.Platform.Collaboration.Contracts.Constants;
+using NICE.Platform.Collaboration.Core.Constants;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging;
 

@@ -3,7 +3,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.Features.Recordings.Command
 using MediatR;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StopRecording;
 using Microsoft.Extensions.Logging;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
 public sealed class StopRecordingCommandHandler(

@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.Requests;
+namespace NICE.Platform.Collaboration.Core.Requests;
 public class RegisterApplicationRequest
 {
     public string Name { get; set; } = default!;

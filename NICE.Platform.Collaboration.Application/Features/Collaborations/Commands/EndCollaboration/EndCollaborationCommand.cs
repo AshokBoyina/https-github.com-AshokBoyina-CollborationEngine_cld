@@ -4,4 +4,4 @@ public record EndCollaborationCommand(
     Guid   CollaborationId,
     Guid   RequestingUserId,
     string Reason = "Completed")
-    : IRequest<NICE.Platform.Collaboration.Contracts.Responses.CollaborationResponse>;
+    : IRequest<NICE.Platform.Collaboration.Core.Responses.CollaborationResponse>;

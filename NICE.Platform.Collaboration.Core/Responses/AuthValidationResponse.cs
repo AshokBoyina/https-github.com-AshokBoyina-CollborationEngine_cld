@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.Responses;
+namespace NICE.Platform.Collaboration.Core.Responses;
 
 /// <summary>
 /// Returned by POST api/v1/collaboration/auth/validate.

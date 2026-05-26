@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.Responses;
+namespace NICE.Platform.Collaboration.Core.Responses;
 public class IceServerConfigResponse
 {
     public List<string> Urls { get; set; } = [];

@@ -3,7 +3,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.Features.Collaborations.Que
 using MediatR;
 using NICE.Platform.Collaboration.Application.Features.Collaborations.Queries.GetCollaborationById;
 using Microsoft.EntityFrameworkCore;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
 public sealed class GetCollaborationByIdQueryHandler(CollaborationDbContext db)

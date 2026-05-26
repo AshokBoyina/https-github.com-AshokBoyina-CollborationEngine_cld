@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.Constants;
+namespace NICE.Platform.Collaboration.Core.Constants;
 public static class SignalRGroups
 {
     public static string Collaboration(Guid id) => $"collab-{id}";

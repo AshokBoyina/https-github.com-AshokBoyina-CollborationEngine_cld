@@ -3,7 +3,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.Features.Collaborations.Que
 using MediatR;
 using NICE.Platform.Collaboration.Application.Features.Collaborations.Queries.GetActiveCollaborations;
 using Microsoft.EntityFrameworkCore;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
 public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext db)
@@ -43,6 +43,7 @@ public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext d
                 ? $"{au.FirstName} {au.LastName}".Trim()
                 : "";
 
+
             return new CollaborationResponse
             {
                 Id           = c.Id,
@@ -50,8 +51,8 @@ public sealed class GetActiveCollaborationsQueryHandler(CollaborationDbContext d
                 Type         = c.ChatMode,
                 StartedAt    = c.CreatedAt,
                 EndedAt      = c.EndedAt,
-                CustomerName = string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName,
-                AgentName    = agentName
+                CustomerName = customerName,
+                AgentName    = agentName,
             };
         });
     }

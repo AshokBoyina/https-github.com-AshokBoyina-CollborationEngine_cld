@@ -3,4 +3,4 @@ using MediatR;
 public record AcceptCollaborationCommand(
     Guid CollaborationId,
     Guid AgentId)
-    : IRequest<NICE.Platform.Collaboration.Contracts.Responses.CollaborationResponse>;
+    : IRequest<NICE.Platform.Collaboration.Core.Responses.CollaborationResponse>;

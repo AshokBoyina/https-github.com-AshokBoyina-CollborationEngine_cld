@@ -4,4 +4,4 @@ public record StartRecordingCommand(
     Guid   CollaborationId,
     Guid   InitiatedByUserId,
     string RecordingType = "Screen")
-    : IRequest<NICE.Platform.Collaboration.Contracts.Responses.RecordingResponse>;
+    : IRequest<NICE.Platform.Collaboration.Core.Responses.RecordingResponse>;

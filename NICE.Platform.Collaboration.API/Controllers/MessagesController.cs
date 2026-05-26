@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NICE.Platform.Collaboration.Application.Features.Messages.Commands.SendMessage;
 using NICE.Platform.Collaboration.Application.Features.Messages.Queries.GetMessages;
-using NICE.Platform.Collaboration.Contracts.Requests;
+using NICE.Platform.Collaboration.Core.Requests;
 
 [Authorize]
 [ApiController]

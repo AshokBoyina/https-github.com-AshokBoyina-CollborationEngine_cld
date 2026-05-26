@@ -7,4 +7,4 @@ public record SendMessageCommand(
     string  Content,
     Guid?   ReplyToId,
     string  MessageType = "Text")
-    : IRequest<NICE.Platform.Collaboration.Contracts.Responses.ChatMessageResponse>;
+    : IRequest<NICE.Platform.Collaboration.Core.Responses.ChatMessageResponse>;

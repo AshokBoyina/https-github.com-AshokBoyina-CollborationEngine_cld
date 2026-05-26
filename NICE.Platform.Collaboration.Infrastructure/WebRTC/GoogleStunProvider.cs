@@ -2,7 +2,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.WebRTC;
 
 using Microsoft.Extensions.Configuration;
 using NICE.Platform.Collaboration.Application.Interfaces.Services;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 
 /// <summary>
 /// Returns Google's free public STUN servers for WebRTC ICE negotiation.

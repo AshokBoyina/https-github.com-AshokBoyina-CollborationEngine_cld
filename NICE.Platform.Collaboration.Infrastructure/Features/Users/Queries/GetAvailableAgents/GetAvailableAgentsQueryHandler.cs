@@ -3,7 +3,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.Features.Users.Queries.GetA
 using MediatR;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableAgents;
 using Microsoft.EntityFrameworkCore;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
 public sealed class GetAvailableAgentsQueryHandler(CollaborationDbContext db)

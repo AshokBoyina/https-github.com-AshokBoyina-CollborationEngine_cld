@@ -1,7 +1,7 @@
 namespace NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StartStandAloneRecording;
 
 using MediatR;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 
 /// <summary>
 /// Creates a StandAlone Collaboration + a Recording row for an agent who

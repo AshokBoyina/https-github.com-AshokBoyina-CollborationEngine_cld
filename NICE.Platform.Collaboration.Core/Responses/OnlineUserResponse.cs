@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.Responses;
+namespace NICE.Platform.Collaboration.Core.Responses;
 
 /// <summary>
 /// A non-External user currently connected to the SignalR hub for an application.

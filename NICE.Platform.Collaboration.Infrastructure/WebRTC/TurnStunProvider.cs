@@ -1,6 +1,6 @@
 namespace NICE.Platform.Collaboration.Infrastructure.WebRTC;
 using NICE.Platform.Collaboration.Application.Interfaces.Services;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using Microsoft.Extensions.Configuration;
 public class TurnStunProvider(IConfiguration config) : IIceServerProvider
 {

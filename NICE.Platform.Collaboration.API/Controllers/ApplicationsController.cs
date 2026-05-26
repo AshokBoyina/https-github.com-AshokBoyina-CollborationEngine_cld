@@ -4,7 +4,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NICE.Platform.Collaboration.Application.Features.Applications.Commands.RegisterApplication;
-using NICE.Platform.Collaboration.Contracts.Requests;
+using NICE.Platform.Collaboration.Core.Requests;
 
 [Authorize]
 [ApiController]

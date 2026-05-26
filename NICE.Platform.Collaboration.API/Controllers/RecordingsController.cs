@@ -12,7 +12,7 @@ using NICE.Platform.Collaboration.Application.Features.Recordings.Commands.StopR
 using NICE.Platform.Collaboration.Application.Features.Recordings.Queries.GetRecordingsByCollaboration;
 using NICE.Platform.Collaboration.Application.Features.Recordings.Queries.GetRecordingSasUrl;
 using NICE.Platform.Collaboration.Application.Interfaces.Services;
-using NICE.Platform.Collaboration.Contracts.Requests;
+using NICE.Platform.Collaboration.Core.Requests;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 using NICE.Platform.Collaboration.API.Hubs;
 

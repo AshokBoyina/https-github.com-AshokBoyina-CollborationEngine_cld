@@ -3,7 +3,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.Features.Users.Queries.GetO
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetOnlineUsers;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
 /// <summary>

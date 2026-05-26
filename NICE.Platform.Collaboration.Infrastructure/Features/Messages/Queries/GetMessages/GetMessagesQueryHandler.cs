@@ -3,7 +3,7 @@ namespace NICE.Platform.Collaboration.Infrastructure.Features.Messages.Queries.G
 using MediatR;
 using NICE.Platform.Collaboration.Application.Features.Messages.Queries.GetMessages;
 using Microsoft.EntityFrameworkCore;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 
 public sealed class GetMessagesQueryHandler(CollaborationDbContext db)

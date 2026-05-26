@@ -9,7 +9,7 @@ using NICE.Platform.Collaboration.Application.Features.Users.Commands.SetAgentAv
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableAgents;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableSupervisors;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetOnlineUsers;
-using NICE.Platform.Collaboration.Contracts.Requests;
+using NICE.Platform.Collaboration.Core.Requests;
 
 [Authorize]
 [ApiController]

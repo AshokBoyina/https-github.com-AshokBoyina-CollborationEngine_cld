@@ -88,6 +88,6 @@ public class ActiveCollaborationDto
     public DateTime? EndedAt      { get; set; }
     /// <summary>Display name of the customer (External participant). Falls back to "Customer" when not yet set.</summary>
     public string    CustomerName { get; set; } = string.Empty;
-    /// <summary>Display name of the agent handling the session. Empty when not yet assigned.</summary>
+    /// <summary>Display name of the agent handling this session. Empty string if not yet assigned.</summary>
     public string    AgentName    { get; set; } = string.Empty;
 }

@@ -4,7 +4,7 @@ using MediatR;
 using NICE.Platform.Collaboration.Application.Features.Collaborations.Commands.EndCollaboration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 using NICE.Platform.Collaboration.Core.Exceptions;
 using NICE.Platform.Collaboration.Infrastructure.Persistence;
 

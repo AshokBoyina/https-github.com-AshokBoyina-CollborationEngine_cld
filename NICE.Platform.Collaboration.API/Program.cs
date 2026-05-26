@@ -4,7 +4,7 @@ using NICE.Platform.Collaboration.API.Middleware;
 using NICE.Platform.Collaboration.API.Hubs;
 using NICE.Platform.Collaboration.API.Services;
 using NICE.Platform.Collaboration.Application.Interfaces.Services;
-using NICE.Platform.Collaboration.Contracts.Constants;
+using NICE.Platform.Collaboration.Core.Constants;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;

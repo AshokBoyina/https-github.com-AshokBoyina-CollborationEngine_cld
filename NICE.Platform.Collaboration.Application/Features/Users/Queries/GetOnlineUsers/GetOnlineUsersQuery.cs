@@ -1,7 +1,7 @@
 namespace NICE.Platform.Collaboration.Application.Features.Users.Queries.GetOnlineUsers;
 
 using MediatR;
-using NICE.Platform.Collaboration.Contracts.Responses;
+using NICE.Platform.Collaboration.Core.Responses;
 
 /// <summary>
 /// Returns all non-External users (Agents, Supervisors, Internal) currently connected

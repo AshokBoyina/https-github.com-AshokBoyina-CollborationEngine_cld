@@ -1,4 +1,4 @@
-namespace NICE.Platform.Collaboration.Contracts.SignalR;
+namespace NICE.Platform.Collaboration.Core.SignalR;
 public class SystemNoticePayload
 {
     public Guid CollaborationId { get; set; }

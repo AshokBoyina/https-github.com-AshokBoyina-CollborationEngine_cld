@@ -11,7 +11,7 @@ using NICE.Platform.Collaboration.Application.Features.Collaborations.Commands.S
 using NICE.Platform.Collaboration.Application.Features.Collaborations.Commands.TransferCollaboration;
 using NICE.Platform.Collaboration.Application.Features.Collaborations.Queries.GetActiveCollaborations;
 using NICE.Platform.Collaboration.Application.Features.Collaborations.Queries.GetCollaborationById;
-using NICE.Platform.Collaboration.Contracts.Requests;
+using NICE.Platform.Collaboration.Core.Requests;
 
 [Authorize]
 [ApiController]

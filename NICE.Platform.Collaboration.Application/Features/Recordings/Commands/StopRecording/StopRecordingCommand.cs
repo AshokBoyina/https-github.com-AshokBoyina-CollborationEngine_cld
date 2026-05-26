@@ -4,4 +4,4 @@ public record StopRecordingCommand(
     Guid   RecordingId,
     Guid   StoppedByUserId,
     string BlobPath)
-    : IRequest<NICE.Platform.Collaboration.Contracts.Responses.RecordingResponse>;
+    : IRequest<NICE.Platform.Collaboration.Core.Responses.RecordingResponse>;

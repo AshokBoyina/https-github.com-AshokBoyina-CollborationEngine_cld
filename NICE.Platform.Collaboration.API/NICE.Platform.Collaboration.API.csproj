@@ -15,7 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\NICE.Platform.Collaboration.Application\NICE.Platform.Collaboration.Application.csproj" />
     <ProjectReference Include="..\NICE.Platform.Collaboration.Infrastructure\NICE.Platform.Collaboration.Infrastructure.csproj" />
-    <ProjectReference Include="..\NICE.Platform.Collaboration.Contracts\NICE.Platform.Collaboration.Contracts.csproj" />
+    <ProjectReference Include="..\NICE.Platform.Collaboration.Core\NICE.Platform.Collaboration.Core.csproj" />
   </ItemGroup>
 
 </Project>

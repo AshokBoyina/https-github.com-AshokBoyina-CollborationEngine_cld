@@ -13,7 +13,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\NICE.Platform.Collaboration.Core\NICE.Platform.Collaboration.Core.csproj" />
-    <ProjectReference Include="..\NICE.Platform.Collaboration.Contracts\NICE.Platform.Collaboration.Contracts.csproj" />
   </ItemGroup>
 
 </Project>
