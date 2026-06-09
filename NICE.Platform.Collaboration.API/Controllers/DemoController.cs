@@ -331,12 +331,43 @@ public class DemoController(CollaborationDbContext db, IConfiguration config) : 
                   u => u.Id,
                   (s, u) => new
                   {
-                      UserId      = u.Id,
-                      DisplayName = (u.FirstName + " " + u.LastName).Trim(),
-                      UserType    = s.UserType,
-                      ConnectedAt = s.ConnectedAt
+                      UserId          = u.Id,
+                      DisplayName     = (u.FirstName + " " + u.LastName).Trim(),
+                      UserType        = s.UserType,
+                      ConnectedAt     = s.ConnectedAt,
+                      ApplicationName = string.Empty
                   })
             .OrderBy(x => x.UserType)
+            .ThenBy(x => x.DisplayName)
+            .ToListAsync(ct);
+
+        return Ok(online);
+    }
+
+    // ── GET /api/v1/demo/online-users/internal ────────────────────────────
+    /// <summary>
+    /// Returns ALL non-External users connected across every application — used by the
+    /// Internal Chat to show a global staff directory regardless of which app each
+    /// person logged into.
+    /// </summary>
+    [HttpGet("online-users/internal")]
+    public async Task<IActionResult> GetAllInternalOnlineUsers(CancellationToken ct)
+    {
+        var online = await db.CurrentSessions
+            .AsNoTracking()
+            .Include(s => s.Application)
+            .Include(s => s.User)
+            .Where(s => s.UserType != "External")
+            .Select(s => new
+            {
+                UserId          = s.User.Id,
+                DisplayName     = (s.User.FirstName + " " + s.User.LastName).Trim(),
+                UserType        = s.UserType,
+                ConnectedAt     = s.ConnectedAt,
+                ApplicationName = s.Application.Name
+            })
+            .OrderBy(x => x.ApplicationName)
+            .ThenBy(x => x.UserType)
             .ThenBy(x => x.DisplayName)
             .ToListAsync(ct);
 

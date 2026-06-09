@@ -67,14 +67,16 @@ public class DemoCreateUserDto
     public string? Email         { get; set; }
 }
 
-/// <summary>Online user as returned by GET /api/v1/demo/online-users/{appId}</summary>
+/// <summary>Online user as returned by GET /api/v1/demo/online-users/{appId} or /internal</summary>
 public class OnlineUserInfo
 {
-    public Guid     UserId      { get; set; }
-    public string   DisplayName { get; set; } = string.Empty;
+    public Guid     UserId          { get; set; }
+    public string   DisplayName     { get; set; } = string.Empty;
     /// <summary>"Agent", "Supervisor", or "Internal"</summary>
-    public string   UserType    { get; set; } = string.Empty;
-    public DateTime ConnectedAt { get; set; }
+    public string   UserType        { get; set; } = string.Empty;
+    public DateTime ConnectedAt     { get; set; }
+    /// <summary>Name of the application this user belongs to. Populated by the /internal endpoint.</summary>
+    public string   ApplicationName { get; set; } = string.Empty;
 }
 
 /// <summary>Active collaboration as returned by GET /api/v1/collaboration/collaborations/active/{appId}</summary>

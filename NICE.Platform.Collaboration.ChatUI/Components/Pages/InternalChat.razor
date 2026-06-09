@@ -69,41 +69,53 @@
             }
             else
             {
-                @foreach (var u in _users)
+                @* Group users by application so staff from different apps are clearly separated *@
+                @foreach (var appGroup in _users.GroupBy(u => u.ApplicationName).OrderBy(g => g.Key))
                 {
-                    var uidStr    = u.UserId.ToString();
-                    var session   = _sessions.FirstOrDefault(s => s.PeerId == uidStr);
-                    var isViewing = _viewingPeerId == uidStr;
-                    var isWaiting = session?.State == SessState.Waiting;
-                    var isActive  = session?.State == SessState.Active;
+                    @if (!string.IsNullOrEmpty(appGroup.Key))
+                    {
+                        <div style="padding:6px 12px 2px;font-size:.65rem;font-weight:700;letter-spacing:.06em;
+                                    text-transform:uppercase;color:var(--nice-text-muted);margin-top:4px">
+                            @appGroup.Key
+                        </div>
+                    }
 
-                    <div class="nc-list-item @(isViewing ? "nc-list-item--active" : "")"
-                         style="padding:10px 12px;cursor:pointer"
-                         @onclick="() => SelectUser(u)">
-                        <div style="position:relative;flex-shrink:0">
-                            <div class="nc-item-av" style="background:@UserTypeColor(u.UserType);width:34px;height:34px;font-size:.8rem">
-                                @Initials(u.DisplayName)
+                    @foreach (var u in appGroup)
+                    {
+                        var uidStr    = u.UserId.ToString();
+                        var session   = _sessions.FirstOrDefault(s => s.PeerId == uidStr);
+                        var isViewing = _viewingPeerId == uidStr;
+                        var isWaiting = session?.State == SessState.Waiting;
+                        var isActive  = session?.State == SessState.Active;
+
+                        <div class="nc-list-item @(isViewing ? "nc-list-item--active" : "")"
+                             style="padding:8px 12px;cursor:pointer"
+                             @onclick="() => SelectUser(u)">
+                            <div style="position:relative;flex-shrink:0">
+                                <div class="nc-item-av" style="background:@UserTypeColor(u.UserType);width:32px;height:32px;font-size:.78rem">
+                                    @Initials(u.DisplayName)
+                                </div>
+                                <span style="position:absolute;bottom:0;right:0;width:8px;height:8px;background:#22c55e;border-radius:50%;border:2px solid var(--nice-bg,#f8fafc)"></span>
                             </div>
-                            <span style="position:absolute;bottom:0;right:0;width:9px;height:9px;background:#22c55e;border-radius:50%;border:2px solid var(--nice-bg,#f8fafc)"></span>
-                        </div>
-                        <div class="nc-item-body" style="min-width:0">
-                            <div class="nc-item-name" style="font-size:.84rem">@u.DisplayName</div>
-                            <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
-                                <span style="display:inline-block;padding:1px 6px;border-radius:10px;font-size:.65rem;font-weight:600;letter-spacing:.03em;
-                                             background:@UserTypeBadgeBg(u.UserType);color:@UserTypeBadgeColor(u.UserType)">
-                                    @u.UserType
-                                </span>
-                                @if (isWaiting)
-                                {
-                                    <span style="font-size:.65rem;color:#f59e0b;font-weight:600">● waiting…</span>
-                                }
-                                else if (isActive)
-                                {
-                                    <span style="font-size:.65rem;color:#22c55e;font-weight:600">● active</span>
-                                }
+                            <div class="nc-item-body" style="min-width:0">
+                                <div class="nc-item-name" style="font-size:.83rem">@u.DisplayName</div>
+                                <div style="display:flex;align-items:center;gap:4px;margin-top:2px;flex-wrap:wrap">
+                                    <span style="display:inline-block;padding:1px 5px;border-radius:10px;font-size:.62rem;font-weight:600;
+                                                 background:@UserTypeBadgeBg(u.UserType);color:@UserTypeBadgeColor(u.UserType)">
+                                        @u.UserType
+                                    </span>
+                                    @if (isWaiting)
+                                    {
+                                        <span style="font-size:.62rem;color:#f59e0b;font-weight:600">● waiting…</span>
+                                    }
+                                    else if (isActive)
+                                    {
+                                        <span style="font-size:.62rem;color:#22c55e;font-weight:600">● chatting</span>
+                                    }
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    }
                 }
             }
         </div>
@@ -170,6 +182,13 @@
                                      background:@UserTypeBadgeBg(vs.PeerUserType);color:@UserTypeBadgeColor(vs.PeerUserType)">
                             @vs.PeerUserType
                         </span>
+                        @if (!string.IsNullOrEmpty(vs.PeerAppName))
+                        {
+                            <span style="display:inline-block;margin-left:4px;padding:1px 7px;border-radius:10px;font-size:.65rem;font-weight:600;
+                                         background:#f1f5f9;color:#475569">
+                                @vs.PeerAppName
+                            </span>
+                        }
                     </div>
                 </div>
                 <div class="nc-session-actions">
@@ -274,6 +293,7 @@
         public string   PeerId       { get; set; } = string.Empty;
         public string   PeerName     { get; set; } = string.Empty;
         public string   PeerUserType { get; set; } = string.Empty;
+        public string   PeerAppName  { get; set; } = string.Empty;
         public string   CollabId     { get; set; } = string.Empty;
         public SessState State       { get; set; } = SessState.Waiting;
         public List<ChatMessage> Messages { get; } = new();
@@ -407,13 +427,9 @@
         }
     });
 
-    Task OnOnlineUsersUpdated(List<OnlineUserInfo> users) => InvokeAsync(() =>
-    {
-        // Show all online users except ourselves
-        _users = users.Where(u => u.UserId.ToString() != _myUserId).ToList();
-        _loadingUsers = false;
-        StateHasChanged();
-    });
+    // The hub fires per-app; for internal chat we need the global list, so re-fetch from REST.
+    Task OnOnlineUsersUpdated(List<OnlineUserInfo> users) =>
+        InvokeAsync(async () => await LoadUsersAsync());
 
     void OnConnectionChanged() => InvokeAsync(StateHasChanged);
 
@@ -428,12 +444,9 @@
         StateHasChanged();
         try
         {
-            var appId = Auth.Current.ApplicationId_Guid;
-            if (appId != Guid.Empty)
-            {
-                var all = await Demo.GetOnlineUsersAsync(appId);
-                _users = all.Where(u => u.UserId.ToString() != _myUserId).ToList();
-            }
+            // Global fetch — returns all internal staff across every application
+            var all = await Demo.GetAllInternalOnlineUsersAsync();
+            _users = all.Where(u => u.UserId.ToString() != _myUserId).ToList();
         }
         catch (Exception ex)
         {
@@ -465,6 +478,7 @@
             PeerId       = uidStr,
             PeerName     = user.DisplayName,
             PeerUserType = user.UserType,
+            PeerAppName  = user.ApplicationName,
             State        = SessState.Waiting
         };
         _sessions.Add(sess);

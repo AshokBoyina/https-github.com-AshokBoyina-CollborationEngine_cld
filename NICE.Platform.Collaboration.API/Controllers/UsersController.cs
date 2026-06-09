@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NICE.Platform.Collaboration.Application.Features.Users.Commands.OnboardUser;
 using NICE.Platform.Collaboration.Application.Features.Users.Commands.SetAgentAvailability;
+using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAllInternalOnlineUsers;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableAgents;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetAvailableSupervisors;
 using NICE.Platform.Collaboration.Application.Features.Users.Queries.GetOnlineUsers;
@@ -67,6 +68,19 @@ public class UsersController(ISender sender) : ControllerBase
     public async Task<IActionResult> GetOnlineUsers(Guid applicationId, CancellationToken ct)
     {
         var result = await sender.Send(new GetOnlineUsersQuery(applicationId), ct);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Returns ALL non-External users connected across every application.
+    /// Used by the global Internal Chat directory so staff from different applications
+    /// can see and message each other regardless of which app they logged into.
+    /// Response includes ApplicationName on each entry for client-side grouping.
+    /// </summary>
+    [HttpGet("internal/online")]
+    public async Task<IActionResult> GetAllInternalOnlineUsers(CancellationToken ct)
+    {
+        var result = await sender.Send(new GetAllInternalOnlineUsersQuery(), ct);
         return Ok(result);
     }
 

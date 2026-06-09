@@ -169,6 +169,27 @@ public class DemoApiService(HttpClient http, IAuthService auth) : IDemoApiServic
         catch { return []; }
     }
 
+    // ── Get ALL internal staff online across every application ─────────────
+    public async Task<List<OnlineUserInfo>> GetAllInternalOnlineUsersAsync(
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Try production endpoint first (requires auth bearer token)
+            var req  = AuthedRequest(HttpMethod.Get, "api/v1/collaboration/users/internal/online");
+            var resp = await http.SendAsync(req, ct);
+            if (resp.IsSuccessStatusCode)
+                return await resp.Content.ReadFromJsonAsync<List<OnlineUserInfo>>(JsonOpts, ct) ?? [];
+
+            // Fall back to demo endpoint
+            var demoReq  = AuthedRequest(HttpMethod.Get, "api/v1/demo/online-users/internal");
+            var demoResp = await http.SendAsync(demoReq, ct);
+            if (!demoResp.IsSuccessStatusCode) return [];
+            return await demoResp.Content.ReadFromJsonAsync<List<OnlineUserInfo>>(JsonOpts, ct) ?? [];
+        }
+        catch { return []; }
+    }
+
     // ── Get all non-ended (active) collaborations for an application ───────
     public async Task<List<ActiveCollaborationDto>> GetActiveCollaborationsAsync(
         Guid appId, CancellationToken ct = default)
