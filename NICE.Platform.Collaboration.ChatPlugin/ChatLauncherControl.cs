@@ -4,18 +4,20 @@ using System.Drawing.Drawing2D;
 
 /// <summary>
 /// Drop-in WinForms control — adds a Floating Action Button (FAB) to any host
-/// Windows application.  Clicking it opens/closes <see cref="ChatFloatingForm"/>,
-/// a borderless top-level Form that hosts the login card and the WebView2 chat.
+/// Windows application.
 ///
-/// Using a top-level Form (rather than a Panel injected into the host form) gives
-/// WebView2 its own well-initialised window and correct SynchronizationContext,
-/// which eliminates the "Expecting object to be local" COM threading errors.
+/// Clicking the FAB injects a <see cref="ChatBotPanel"/> directly into the host
+/// window (same application window — no separate window opens for the bot).
+/// The panel appears as an overlay anchored above the FAB, inside the host form.
+///
+/// Clicking "Talk with internal staff" inside the bot panel opens a separate
+/// <see cref="ChatLiveForm"/> window in the Windows taskbar.
 /// </summary>
 public sealed class ChatLauncherControl : UserControl
 {
     // ── NICE brand colours ─────────────────────────────────────────────────
-    private static readonly Color NicePrimary = Color.FromArgb(0, 91, 65);   // #005B41
-    private static readonly Color NiceError   = Color.FromArgb(220, 53, 69); // #DC3545
+    private static readonly Color NicePrimary = Color.FromArgb(0, 91, 65);
+    private static readonly Color NiceError   = Color.FromArgb(220, 53, 69);
 
     // ── FAB dimensions ─────────────────────────────────────────────────────
     private const int FabSize   = 56;
@@ -26,8 +28,9 @@ public sealed class ChatLauncherControl : UserControl
     private readonly Label  _badge;
 
     // ── State ──────────────────────────────────────────────────────────────
-    private ChatFloatingForm? _floatingForm;
+    private ChatBotPanel?     _botPanel;
     private ChatPluginConfig? _presetConfig;
+    private Form?             _hostForm; // cached to unwire Resize on dispose
 
     // ── Public events ──────────────────────────────────────────────────────
     public event EventHandler<int>? UnreadCountChanged;
@@ -73,14 +76,87 @@ public sealed class ChatLauncherControl : UserControl
 
     public void SetConfig(ChatPluginConfig config) => _presetConfig = config;
 
-    // ── FAB paint ──────────────────────────────────────────────────────────
+    // ── FAB click — toggle bot panel inside host form ─────────────────────
+
+    private void Fab_Click(object? sender, EventArgs e)
+    {
+        var hostForm = FindForm();
+        if (hostForm == null) return;
+
+        // Lazily create the bot panel and inject it into the host form's Controls
+        if (_botPanel == null || _botPanel.IsDisposed)
+        {
+            _botPanel = new ChatBotPanel();
+
+            if (_presetConfig != null)
+                _botPanel.SetConfig(_presetConfig);
+
+            _botPanel.UnreadCountChanged += (_, count) =>
+            {
+                UnreadCountChanged?.Invoke(this, count);
+                UpdateBadge(count);
+            };
+
+            _botPanel.CloseRequested += (_, _) => UpdateBadge(0);
+
+            // Inject into host form so it overlays all other content
+            hostForm.Controls.Add(_botPanel);
+            _botPanel.BringToFront();
+
+            // Reposition when host form resizes
+            _hostForm          = hostForm;
+            hostForm.Resize   += RepositionBotPanel;
+            hostForm.SizeChanged += RepositionBotPanel;
+        }
+
+        if (_botPanel.Visible)
+        {
+            _botPanel.Hide();
+            UpdateBadge(0);
+        }
+        else
+        {
+            RepositionBotPanel(null, EventArgs.Empty);
+            _botPanel.BringToFront();
+            _botPanel.Show();
+        }
+    }
+
+    // ── Position bot panel above the FAB, inside the host form ────────────
+
+    private void RepositionBotPanel(object? sender, EventArgs e)
+    {
+        if (_botPanel == null || _botPanel.IsDisposed) return;
+
+        var hostForm = FindForm();
+        if (hostForm == null) return;
+
+        // Convert the FAB's screen position to host-form client coordinates
+        var fabScreen   = PointToScreen(Point.Empty);
+        var fabInClient = hostForm.PointToClient(fabScreen);
+
+        const int Gap = 10;
+
+        // Preferred: align right edge of panel with right edge of FAB,
+        //            bottom edge of panel 'Gap' px above top of FAB
+        int x = fabInClient.X + FabSize - _botPanel.Width;
+        int y = fabInClient.Y - _botPanel.Height - Gap;
+
+        // Clamp within host form's client area
+        x = Math.Max(4, Math.Min(x, hostForm.ClientSize.Width  - _botPanel.Width  - 4));
+        y = Math.Max(4, Math.Min(y, hostForm.ClientSize.Height - _botPanel.Height - 4));
+
+        _botPanel.Location = new Point(x, y);
+    }
+
+    // ── FAB paint (chat-bubble icon) ───────────────────────────────────────
 
     private void Fab_Paint(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        using var path = RoundedRect(0, 0, FabSize, FabSize, FabSize / 2);
+        using var path  = RoundedRect(0, 0, FabSize, FabSize, FabSize / 2);
         g.SetClip(path);
         using var bg = new SolidBrush(NicePrimary);
         g.FillRectangle(bg, 0, 0, FabSize, FabSize);
@@ -91,7 +167,8 @@ public sealed class ChatLauncherControl : UserControl
         using var bubbleBrush = new SolidBrush(Color.White);
         g.FillPath(bubbleBrush, bubblePath);
 
-        var tail = new Point[] {
+        var tail = new Point[]
+        {
             new(bx + 3, by + bh),
             new(bx + 3, by + bh + 7),
             new(bx + 12, by + bh)
@@ -105,6 +182,17 @@ public sealed class ChatLauncherControl : UserControl
         g.FillEllipse(dotBrush, bx + 21, cy - 2, 5, 5);
     }
 
+    // ── Badge ──────────────────────────────────────────────────────────────
+
+    private void UpdateBadge(int count)
+    {
+        if (count <= 0) { _badge.Visible = false; return; }
+        _badge.Text    = count > 99 ? "99+" : count.ToString();
+        _badge.Visible = true;
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
     private static GraphicsPath RoundedRect(int x, int y, int w, int h, int r)
     {
         var p = new GraphicsPath();
@@ -116,64 +204,18 @@ public sealed class ChatLauncherControl : UserControl
         return p;
     }
 
-    // ── FAB click ──────────────────────────────────────────────────────────
-
-    private void Fab_Click(object? sender, EventArgs e)
-    {
-        if (_floatingForm == null || _floatingForm.IsDisposed)
-        {
-            _floatingForm = new ChatFloatingForm();
-
-            if (_presetConfig is not null)
-                _floatingForm.SetConfig(_presetConfig);
-
-            _floatingForm.UnreadCountChanged += (_, count) =>
-            {
-                UnreadCountChanged?.Invoke(this, count);
-                UpdateBadge(count);
-            };
-
-            // When the floating form is closed/hidden, clear badge
-            _floatingForm.VisibleChanged += (_, _) =>
-            {
-                if (_floatingForm?.Visible == false)
-                    UpdateBadge(0);
-            };
-        }
-
-        if (_floatingForm.Visible)
-        {
-            // Window already open — bring it to the front instead of toggling.
-            _floatingForm.BringToFront();
-            _floatingForm.Activate();
-        }
-        else
-        {
-            // Show as an independent taskbar window (no owner form).
-            _floatingForm.Show();
-            _floatingForm.Activate();
-        }
-    }
-
-    // ── Badge ──────────────────────────────────────────────────────────────
-
-    private void UpdateBadge(int count)
-    {
-        if (count <= 0)
-        {
-            _badge.Visible = false;
-            return;
-        }
-        _badge.Text    = count > 99 ? "99+" : count.ToString();
-        _badge.Visible = true;
-    }
-
     // ── Disposal ───────────────────────────────────────────────────────────
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            _floatingForm?.Dispose();
+            if (_hostForm != null)
+            {
+                _hostForm.Resize      -= RepositionBotPanel;
+                _hostForm.SizeChanged -= RepositionBotPanel;
+            }
+            _botPanel?.Dispose();
         }
         base.Dispose(disposing);
     }
